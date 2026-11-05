@@ -111,7 +111,7 @@ class ControlService:
     def go_to(self, name: str, azimuth_deg: float, elevation_deg: float, speed_deg_s: float = 0.0,
               source: str = "manual") -> Tuple[float, float]:
         """Азимут від півночі і кут місця. Повертає ціль після обмеження межами (від півночі)."""
-        if source == "manual":
+        if source in ("manual", "measure"):
             self._check_manual(name)
         cfg = self._cams[name]
         az_cam, el = ctl.target_to_camera(cfg, azimuth_deg, elevation_deg)

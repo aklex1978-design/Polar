@@ -114,6 +114,21 @@ MIGRATIONS = [
     ALTER TABLE cameras ADD COLUMN servo_baudrate INTEGER NOT NULL DEFAULT 1000000;
     ALTER TABLE servo_settings ADD COLUMN gear_ratio REAL NOT NULL DEFAULT 1;
     """,
+    # 3 — етап 2: параметри відеопотоку з форми камери
+    """
+    ALTER TABLE cameras ADD COLUMN stream_protocol TEXT NOT NULL DEFAULT 'RTSP';
+    ALTER TABLE cameras ADD COLUMN stream_login TEXT NOT NULL DEFAULT '';
+    ALTER TABLE cameras ADD COLUMN stream_password_enc TEXT NOT NULL DEFAULT '';
+    ALTER TABLE cameras ADD COLUMN stream_kind TEXT NOT NULL DEFAULT 'main';
+    ALTER TABLE cameras ADD COLUMN stream_codec TEXT NOT NULL DEFAULT 'H.264';
+    ALTER TABLE cameras ADD COLUMN stream_res_x INTEGER;
+    ALTER TABLE cameras ADD COLUMN stream_res_y INTEGER;
+    ALTER TABLE cameras ADD COLUMN stream_fps REAL NOT NULL DEFAULT 25;
+    ALTER TABLE cameras ADD COLUMN max_detection_latency_ms INTEGER NOT NULL DEFAULT 500;
+    ALTER TABLE cameras ADD COLUMN stream_transport TEXT NOT NULL DEFAULT 'TCP';
+    ALTER TABLE cameras ADD COLUMN stream_buffer_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE cameras ADD COLUMN panorama_stale INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

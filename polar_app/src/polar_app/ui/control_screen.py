@@ -5,9 +5,9 @@ import copy
 from concurrent.futures import Future
 from typing import Callable, Dict, Optional
 
-from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
                              QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                              QListWidget, QListWidgetItem, QMenu, QPushButton, QScrollArea,
                              QSpinBox, QSplitter, QVBoxLayout, QWidget)
@@ -21,11 +21,11 @@ AXIS_TITLE = {"pan": "Горизонтальний (азимут)", "tilt": "В�
 
 def _dot(color: str) -> QIcon:
     pm = QPixmap(14, 14)
-    pm.fill(Qt.transparent)
+    pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setBrush(QColor(color))
-    p.setPen(Qt.NoPen)
+    p.setPen(Qt.PenStyle.NoPen)
     p.drawEllipse(2, 2, 10, 10)
     p.end()
     return QIcon(pm)
@@ -141,11 +141,11 @@ class ControlScreen(QWidget):
         self._current: Optional[str] = None
         self._items: Dict[str, QListWidgetItem] = {}
 
-        splitter = QSplitter(Qt.Horizontal, self)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._build_list())
         right = QScrollArea()
         right.setWidgetResizable(True)
-        right.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         right.setWidget(self._build_details())
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
@@ -309,9 +309,8 @@ class ControlScreen(QWidget):
         btns = QHBoxLayout()
         self.zero_btn = QPushButton("Встановити нуль")
         menu = QMenu(self.zero_btn)
-        menu.addAction("Обидві осі", lambda: self._on_zero(AXES))
-        menu.addAction(AXIS_TITLE["pan"], lambda: self._on_zero(("pan",)))
-        menu.addAction(AXIS_TITLE["tilt"], lambda: self._on_zero(("tilt",)))
+        for text, axes in (("Обидві осі", AXES), (AXIS_TITLE["pan"], ("pan",)), (AXIS_TITLE["tilt"], ("tilt",))):
+            menu.addAction(text).triggered.connect(lambda _=False, a=axes: self._on_zero(a))
         self.zero_btn.setMenu(menu)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.clicked.connect(self._on_save)
@@ -330,17 +329,24 @@ class ControlScreen(QWidget):
         self._items.clear()
         for name in self.service.camera_names():
             item = QListWidgetItem(_dot(BAD), name)
-            item.setData(Qt.UserRole, name)
+            item.setData(Qt.ItemDataRole.UserRole, name)
             self.camera_list.addItem(item)
             self._items[name] = item
         if self.camera_list.count():
             self.camera_list.setCurrentRow(0)
 
+    def reload_cameras(self) -> None:
+        """Список камер змінився (додано, перейменовано, видалено)."""
+        current = self._current
+        self._fill_list()
+        if current in self._items:
+            self.select_camera(current)
+
     def select_camera(self, name: str) -> None:
         self.camera_list.setCurrentItem(self._items[name])
 
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
-        self._current = item.data(Qt.UserRole) if item else None
+        self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
         self.title.setText(f"Камери / Управління · {self._current}" if self._current else "Камери / Управління")
         self.message.clear()
         self._load_form()

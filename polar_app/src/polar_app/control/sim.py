@@ -63,18 +63,19 @@ class SimControlBackend(ControlBackend):
 
     def tick(self) -> None:
         """Один цикл: сервер «на звʼязку» → Pi оновлює стан → сервер отримує стан."""
-        for cam in list(self._cams.values()):
+        for name, cam in list(self._cams.items()):
             with cam.lock:
                 if cam.online:
                     cam.ctrl.heartbeat()
                 st = cam.ctrl.update()
                 if not cam.online:
                     continue
-                cam.snapshot = CameraSnapshot(
+                snap = cam.snapshot = CameraSnapshot(
                     received_at=self._clock(), azimuth_deg=st.azimuth_deg, elevation_deg=st.elevation_deg,
                     moving=st.moving, error_flags=st.error_flags,
                     pan=self._telemetry(cam.ctrl.pan.servo_id, st.pan),
                     tilt=self._telemetry(cam.ctrl.tilt.servo_id, st.tilt))
+            self._emit(name, snap)
 
     @staticmethod
     def _telemetry(servo_id, status) -> ServoTelemetry:
