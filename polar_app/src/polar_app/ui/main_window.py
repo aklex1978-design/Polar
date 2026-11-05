@@ -9,6 +9,7 @@ from .calibration_screen import CalibrationScreen
 from .camera_form import CameraForm
 from .cameras_screen import CamerasScreen
 from .control_screen import ControlScreen
+from .work_screen import WorkScreen
 
 
 class MainWindow(QMainWindow):
@@ -23,7 +24,8 @@ class MainWindow(QMainWindow):
         self.form = CameraForm(ctx)
         self.control = ControlScreen(ctx.control, ctx)
         self.calibration = CalibrationScreen(ctx)
-        for page in (self.cameras, self.form, self.control, self.calibration):
+        self.work = WorkScreen(ctx)
+        for page in (self.cameras, self.form, self.control, self.calibration, self.work):
             self.stack.addWidget(page)
 
         self.cameras.edit_requested.connect(self.edit_camera)
@@ -42,6 +44,10 @@ class MainWindow(QMainWindow):
             act = QAction(text, self)
             act.triggered.connect(slot)
             menu.addAction(act)
+        work = self.menuBar().addMenu("Робота")
+        act = QAction("Режим роботи", self)
+        act.triggered.connect(lambda: self.stack.setCurrentWidget(self.work))
+        work.addAction(act)
         self.show_cameras()
         self.resize(1180, 860)
 
@@ -76,6 +82,7 @@ class MainWindow(QMainWindow):
         self.control.leave()
         self.calibration.leave()
         self.calibration.timer.stop()
+        self.work.timer.stop()
         self.control.timer.stop()
         self.form.timer.stop()
         self.ctx.shutdown()
