@@ -61,7 +61,7 @@ def test_add_camera_validation_and_save(win):
     f = win.form
     assert win.stack.currentWidget() is f
     assert not f.save_btn.isEnabled()                        # порожні обовʼязкові поля
-    assert f.errors["name"].isVisible() and f.errors["latitude"].isVisible()
+    assert f.errors["name"].text() and f.errors["latitude"].text()
     f.widgets["name"].setText("Камера 4")
     f.widgets["latitude"].setText("50,46")                   # кома теж працює
     f.widgets["longitude"].setText("30.6")
@@ -143,7 +143,7 @@ def test_measure_latency_button(win):
     f.latency_btn.click()
     assert wait(30, lambda: "Затримка відео" in f.message.text() or "не виміряно" in f.message.text())
     assert "Затримка відео" in f.message.text(), f.message.text()
-    assert 100 <= f.widgets["video_latency_ms"].value() <= 220
+    assert 120 <= f.widgets["video_latency_ms"].value() <= 250   # 150 мс потоку + час доставки кадру
 
 
 def test_usb_camera_list_fills_form(win):
@@ -230,12 +230,12 @@ def test_check_connection_fills_resolution(win):
     win.cameras.add_btn.click()
     f = win.form
     assert "resolution_x" not in f.widgets                     # у «Оптиці» роздільної здатності немає
-    assert f.errors["stream_res_x"].isVisible()                # обовʼязкова, поки порожня
+    assert f.errors["stream_res_x"].text()                # обовʼязкова, поки порожня
     f.widgets["address"].setText("rtsp://10.0.0.20/stream1")
     f.check_btn.click()
     assert wait(15, lambda: "Зʼєднання працює" in f.message.text()), f.message.text()
     assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("640", "360")
-    assert not f.errors["stream_res_x"].isVisible()
+    assert f.errors["stream_res_x"].text() == ""
 
 
 def test_streams_follow_screens(win):
@@ -256,3 +256,29 @@ def test_streams_follow_screens(win):
     assert v.is_running("Камера 3") and not v.is_running(first)
     win.show_cameras()                                             # вихід з «Управління»
     assert not v.is_running("Камера 3")
+
+
+def test_camera_menu_has_list_and_control_only(win):
+    menu = win.menuBar().actions()[0].menu()
+    assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
+
+
+def test_form_sections_collapse_and_buttons_visible(win):
+    win.cameras.add_btn.click()
+    f = win.form
+    assert set(f.sections) == {"Загальне", "Оптика", "Розміщення", "Відеопотік", "Управління"}
+    assert f.sections["Загальне"].is_expanded()
+    assert not f.sections["Розміщення"].is_expanded() and not f.sections["Відеопотік"].body.isVisible()
+    assert "помил" in f.sections["Розміщення"].header.text()       # помилки видно і в згорнутому блоці
+    # кнопки форми — поза прокручуваною частиною, видимі без прокрутки
+    assert f.save_btn.isVisible() and f.check_btn.isVisible()
+    assert f.save_btn.mapTo(f, f.save_btn.rect().bottomLeft()).y() <= f.height()
+    f.sections["Відеопотік"].header.click()                         # розгорнути натисканням
+    assert f.sections["Відеопотік"].is_expanded() and f.sections["Відеопотік"].body.isVisible()
+    f.sections["Відеопотік"].header.click()                         # згорнути
+    assert not f.sections["Відеопотік"].body.isVisible()
+    f.expand_errors()
+    assert f.sections["Розміщення"].is_expanded()
+    for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
+        f.widgets[k].setText(v)
+    assert f.sections["Розміщення"].header.text() == "Розміщення"

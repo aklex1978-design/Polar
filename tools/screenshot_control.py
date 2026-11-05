@@ -55,6 +55,8 @@ win.grab().save(os.path.join(out_dir, "camera_form.png"))
 
 win.edit_camera(None)
 f = win.form
+pump(0.3)
+win.grab().save(os.path.join(out_dir, "camera_form_new.png"))
 f.widgets["protocol"].setCurrentIndex(f.widgets["protocol"].findData("USB"))
 f.usb_btn.click()
 pump(1.0)
