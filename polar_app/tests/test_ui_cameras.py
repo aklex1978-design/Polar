@@ -61,7 +61,7 @@ def test_add_camera_validation_and_save(win):
     f = win.form
     assert win.stack.currentWidget() is f
     assert not f.save_btn.isEnabled()                        # порожні обовʼязкові поля
-    assert f.errors["name"].isVisible() and f.errors["latitude"].isVisible()
+    assert f.errors["name"].text() and f.errors["latitude"].text()
     f.widgets["name"].setText("Камера 4")
     f.widgets["latitude"].setText("50,46")                   # кома теж працює
     f.widgets["longitude"].setText("30.6")
@@ -230,12 +230,12 @@ def test_check_connection_fills_resolution(win):
     win.cameras.add_btn.click()
     f = win.form
     assert "resolution_x" not in f.widgets                     # у «Оптиці» роздільної здатності немає
-    assert f.errors["stream_res_x"].isVisible()                # обовʼязкова, поки порожня
+    assert f.errors["stream_res_x"].text()                # обовʼязкова, поки порожня
     f.widgets["address"].setText("rtsp://10.0.0.20/stream1")
     f.check_btn.click()
     assert wait(15, lambda: "Зʼєднання працює" in f.message.text()), f.message.text()
     assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("640", "360")
-    assert not f.errors["stream_res_x"].isVisible()
+    assert f.errors["stream_res_x"].text() == ""
 
 
 def test_streams_follow_screens(win):
