@@ -4,7 +4,7 @@ import pytest
 
 from polar_app.control.service import ControlService
 from polar_app.control.sim import SimControlBackend
-from polar_app.demo import seed_demo
+from demo_data import seed_demo
 from polar_app.video_service import VideoService
 from polar_core import cameras as cm
 from polar_core import db
@@ -119,4 +119,20 @@ def test_check_connection_reuses_running_usb_stream(env):
     rec = cm.CameraRecord(name="Нова USB", protocol="USB", address="0")
     img, size, fps = vs.check_connection(rec, seconds=0.5).result(timeout=10)
     assert size == (640, 360) and opened == []                 # пристрій вдруге не відкривався
+    vs._open_factory = real_factory
+
+
+def test_demo_video_needs_no_stream(env):
+    ctl, vs, backend, conn = env
+    opened = []
+    real_factory = vs._open_factory
+    vs._open_factory = lambda rec, pw: opened.append(rec.name) or real_factory(rec, pw)
+    cid = cm.list_cameras(conn)[2].id
+    cm.set_demo(conn, cid, video=True)
+    rec = cm.get_camera(conn, cid)
+    rec.address = ""
+    assert rec.validate() .get("address") is None           # адреса в демо відео не потрібна
+    vs.restart(cm.get_camera(conn, cid))
+    assert wait(5, lambda: vs.stats(rec.name).frames > 5)
+    assert opened == [] and vs.latest(rec.name).has_angles
     vs._open_factory = real_factory

@@ -40,7 +40,9 @@ python3 -m pytest
 
 ```bash
 python3 -m pip install -e polar_core -e ros2_ws/src/pantilt_driver -e "polar_app[gui]"
-python3 -m polar_app --sim --demo      # сервоприводи — імітатор, відео — справжні потоки
+python3 -m polar_app --db polar.sqlite
+# Демо вмикається для кожної камери окремо: «Демо сервоприводів» і «Демо відео»
+# (форма камери або екран «Управління»)
 ```
 
 ### Логіка керування сервоприводами (без ROS)

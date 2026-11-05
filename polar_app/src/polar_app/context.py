@@ -42,6 +42,21 @@ class AppContext:
         self.video.restart(self.camera(cid))
         return cid, stale
 
+    def set_demo(self, camera_id: int, servos=None, video=None) -> None:
+        """Демо для однієї камери: імітатор сервоприводів і/або синтетичне відео."""
+        with self.control._db_lock:
+            cm.set_demo(self.conn, camera_id, servos=servos, video=video)
+        rec = self.camera(camera_id)
+        if servos is not None:
+            try:
+                self.control.stop(rec.name)       # справжня камера зупиняється перед переходом у демо
+            except Exception:  # noqa: BLE001
+                pass
+            self.control.reload()
+            self.control.start()
+        if video is not None:
+            self.video.restart(rec)
+
     def delete_camera(self, camera_id: int) -> None:
         rec = self.camera(camera_id)
         self.video.stop_camera(rec.name)

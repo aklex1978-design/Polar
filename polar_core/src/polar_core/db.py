@@ -129,6 +129,11 @@ MIGRATIONS = [
     ALTER TABLE cameras ADD COLUMN stream_buffer_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE cameras ADD COLUMN panorama_stale INTEGER NOT NULL DEFAULT 0;
     """,
+    # 4 — демо окремо для кожної камери: імітатор сервоприводів і/або синтетичне відео
+    """
+    ALTER TABLE cameras ADD COLUMN demo_servos INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE cameras ADD COLUMN demo_video INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

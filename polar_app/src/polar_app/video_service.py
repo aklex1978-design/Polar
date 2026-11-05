@@ -160,6 +160,11 @@ class VideoService:
         elif rec.id and rec.has_password:
             with self._db_lock:
                 password = cm.stream_password(self.conn, self.box, rec.id)
+        if rec.demo_video:
+            from .video_demo import demo_opener
+
+            return VideoSource(demo_opener(rec, self.history(rec.name) if rec.id else None), rec.name,
+                               on_event=on_event)
         return VideoSource(self._open_factory(rec, password), rec.name, on_event=on_event)
 
     def _running_usb(self, rec: CameraRecord) -> Optional[_Pipeline]:

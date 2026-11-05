@@ -57,6 +57,9 @@ class CameraRecord:
     el_min: float = 0.0
     el_max: float = 90.0
     max_speed_deg_s: float = 180.0
+    # Демо: імітатор замість справжнього пристрою
+    demo_servos: bool = False               # сервоприводи й Raspberry Pi — імітатор, без ROS 2
+    demo_video: bool = False                # синтетична сцена замість відеопотоку
     # службове
     id: Optional[int] = None
     has_password: bool = False
@@ -97,11 +100,12 @@ class CameraRecord:
             e["tilt_deg"] = "−180…180°"
         if self.protocol not in PROTOCOLS:
             e["protocol"] = "оберіть зі списку"
-        addr_error = address_error(self.protocol, self.address)
+        addr_error = None if self.demo_video and not self.address.strip() else address_error(
+            self.protocol, self.address)       # у демо відео адреса не потрібна
         if addr_error:
             e["address"] = addr_error
-        elif self.protocol == "USB":
-            twin = next((o for o in others if o.protocol == "USB" and o.id != self.id
+        elif self.protocol == "USB" and not self.demo_video:
+            twin = next((o for o in others if o.protocol == "USB" and o.id != self.id and not o.demo_video
                          and o.address.strip() == self.address.strip()), None)
             if twin is not None:
                 e["address"] = f"цю USB-камеру вже використовує «{twin.name}»"
@@ -165,6 +169,7 @@ _COLS = {
     "max_detection_latency_ms": "max_detection_latency_ms", "transport": "stream_transport",
     "buffer_ms": "stream_buffer_ms", "video_latency_ms": "stream_latency_ms",
     "ros_namespace": "ros_namespace", "panorama_path": "panorama_path",
+    "demo_servos": "demo_servos", "demo_video": "demo_video",
 }
 
 
@@ -187,6 +192,7 @@ def get_camera(conn: sqlite3.Connection, camera_id: int) -> CameraRecord:
     rec = CameraRecord(id=camera_id)
     for i, attr in enumerate(_COLS):
         setattr(rec, attr, row[i])
+    rec.demo_servos, rec.demo_video = bool(rec.demo_servos), bool(rec.demo_video)
     rec.has_password = bool(row[len(_COLS)])
     rec.panorama_stale = bool(row[len(_COLS) + 1])
     pan, tilt = _servo_row(conn, camera_id, "pan"), _servo_row(conn, camera_id, "tilt")
@@ -259,3 +265,13 @@ def delete_camera(conn: sqlite3.Connection, camera_id: int) -> str:
 
 def record_fields() -> List[str]:
     return [f.name for f in fields(CameraRecord)]
+
+
+def set_demo(conn: sqlite3.Connection, camera_id: int, servos: Optional[bool] = None,
+             video: Optional[bool] = None) -> None:
+    """Увімкнути або вимкнути демо для однієї камери (з екрана «Управління»)."""
+    with conn:
+        if servos is not None:
+            conn.execute("UPDATE cameras SET demo_servos = ? WHERE id = ?", (int(servos), camera_id))
+        if video is not None:
+            conn.execute("UPDATE cameras SET demo_video = ? WHERE id = ?", (int(video), camera_id))

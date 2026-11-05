@@ -20,7 +20,7 @@ class MainWindow(QMainWindow):
 
         self.cameras = CamerasScreen(ctx)
         self.form = CameraForm(ctx)
-        self.control = ControlScreen(ctx.control)
+        self.control = ControlScreen(ctx.control, ctx)
         self.calibration = QLabel("Калібрування камери — етап 3 плану розробки.")
         for page in (self.cameras, self.form, self.control, self.calibration):
             self.stack.addWidget(page)
@@ -30,6 +30,8 @@ class MainWindow(QMainWindow):
         self.cameras.changed.connect(self.control.reload_cameras)
         self.form.closed.connect(self.show_cameras)
         self.form.saved.connect(lambda _id: (self.cameras.refresh(), self.control.reload_cameras()))
+        self.stack.currentChanged.connect(lambda _i: self.control._load_form()
+                                          if self.stack.currentWidget() is self.control else None)
 
         menu = self.menuBar().addMenu("Камери")
         for text, slot in (("Список", self.show_cameras), ("Редагування", lambda: self.edit_camera(None)),

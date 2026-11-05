@@ -133,9 +133,10 @@ class ControlScreen(QWidget):
 
     REFRESH_MS = 100
 
-    def __init__(self, service, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, service, ctx=None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.service = service
+        self.ctx = ctx
         self._bridge = _Bridge()
         self._bridge.done.connect(lambda fn, f: fn(f))
         self._current: Optional[str] = None
@@ -179,6 +180,17 @@ class ControlScreen(QWidget):
         self.title = QLabel("Камери / Управління")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(self.title)
+        demo = QHBoxLayout()
+        self.demo_servos = QCheckBox("Демо сервоприводів")
+        self.demo_servos.setToolTip("Імітатор замість Raspberry Pi і ROS 2 — лише для цієї камери")
+        self.demo_video = QCheckBox("Демо відео")
+        self.demo_video.setToolTip("Синтетична сцена замість відеопотоку — лише для цієї камери")
+        self.demo_servos.toggled.connect(lambda on: self._on_demo(servos=on))
+        self.demo_video.toggled.connect(lambda on: self._on_demo(video=on))
+        demo.addWidget(self.demo_servos)
+        demo.addWidget(self.demo_video)
+        demo.addStretch(1)
+        v.addLayout(demo)
 
         # поточні кути
         cur = QGroupBox("Поточні кути (від датчика)")
@@ -352,9 +364,35 @@ class ControlScreen(QWidget):
         self._load_form()
         self.refresh()
 
+    def _load_demo(self) -> None:
+        rec = self._record()
+        self._loading_demo = True
+        for box, value in ((self.demo_servos, rec.demo_servos if rec else False),
+                           (self.demo_video, rec.demo_video if rec else False)):
+            box.setChecked(bool(value))
+            box.setEnabled(rec is not None)
+        self._loading_demo = False
+
+    def _record(self):
+        if not self._current or self.ctx is None:
+            return None
+        cfg = self.service.config(self._current)
+        return self.ctx.camera(cfg.camera_id)
+
+    def _on_demo(self, servos=None, video=None) -> None:
+        if getattr(self, "_loading_demo", False) or self.ctx is None or not self._current:
+            return
+        name = self._current
+        self.ctx.set_demo(self.service.config(name).camera_id, servos=servos, video=video)
+        what = "сервоприводів" if servos is not None else "відео"
+        on = servos if servos is not None else video
+        self._say(f"{name}: демо {what} {'увімкнено' if on else 'вимкнено'}")
+        self._load_form()
+
     def _load_form(self) -> None:
         if not self._current:
             return
+        self._load_demo()
         cfg = self.service.config(self._current)
         self.port.setText(cfg.port)
         idx = self.baud.findData(cfg.baudrate)
@@ -372,7 +410,8 @@ class ControlScreen(QWidget):
                 continue
             color = GOOD if st.link_ok and not st.error_flags else (WARN if st.link_ok else BAD)
             item.setIcon(_dot(color))
-            item.setText(f"{st.name} · {st.link_text}")
+            demo = self.service.config(st.name).demo
+            item.setText(f"{st.name} · {st.link_text}" + (" · демо" if demo else ""))
             item.setToolTip(st.error_text or st.link_text)
             if st.name == self._current:
                 self._show_status(st)
@@ -383,8 +422,12 @@ class ControlScreen(QWidget):
         self.cur_move.setText("Рух: рухається" if st.moving else "Рух: стоїть")
         self.link_label.setText(st.link_text)
         self.link_label.setStyleSheet(f"color: {GOOD if st.link_ok else BAD}")
-        self.error_label.setText(st.error_text)
-        self.error_label.setVisible(bool(st.error_text))
+        err = st.error_text
+        ros_error = getattr(self.service.backend, "ros_error", "")
+        if not st.link_ok and ros_error and not self.service.config(st.name).demo:
+            err = ros_error + " — увімкніть «Демо сервоприводів» або встановіть ROS 2"
+        self.error_label.setText(err)
+        self.error_label.setVisible(bool(err))
         cfg = self.service.config(st.name)
         self.cols["pan"].show_telemetry(st.pan, cfg.pan.temperature_limit_c)
         self.cols["tilt"].show_telemetry(st.tilt, cfg.tilt.temperature_limit_c)
@@ -408,7 +451,7 @@ class ControlScreen(QWidget):
         try:
             az, el = self.service.go_to(self._current, self.tgt_az.value(), self.tgt_el.value(),
                                         self.speed.value())
-        except ManualControlLocked as e:
+        except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
             return
         if abs(el - self.tgt_el.value()) > 1e-6 or abs((az - self.tgt_az.value() + 180) % 360 - 180) > 1e-6:
@@ -422,7 +465,7 @@ class ControlScreen(QWidget):
         step = self.step.value()
         try:
             self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
-        except ManualControlLocked as e:
+        except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
 
     def _on_stop(self) -> None:

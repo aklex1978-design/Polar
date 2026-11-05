@@ -109,6 +109,7 @@ class CameraControlConfig:
     baudrate: int = 1_000_000
     pan: ServoSettings = field(default_factory=lambda: default_servo("pan"))
     tilt: ServoSettings = field(default_factory=lambda: default_servo("tilt"))
+    demo: bool = False             # сервоприводи — імітатор (без ROS 2 і Raspberry Pi)
 
     def validate(self) -> List[str]:
         errors = self.pan.validate() + self.tilt.validate()
@@ -210,12 +211,12 @@ _SERVO_COLS = ("servo_id", "direction", "zero_offset_deg", "gear_ratio", "max_sp
 
 def load_control_configs(conn: sqlite3.Connection) -> List[CameraControlConfig]:
     """Камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
-    cams = conn.execute("SELECT id, name, ros_namespace, north_offset_deg, servo_port, servo_baudrate "
-                        "FROM cameras ORDER BY id").fetchall()
+    cams = conn.execute("SELECT id, name, ros_namespace, north_offset_deg, servo_port, servo_baudrate, "
+                        "demo_servos FROM cameras ORDER BY id").fetchall()
     result = []
     for c in cams:
         cfg = CameraControlConfig(camera_id=c[0], name=c[1], namespace=c[2] or f"camera_{c[0]}",
-                                  north_offset_deg=c[3], port=c[4], baudrate=c[5])
+                                  north_offset_deg=c[3], port=c[4], baudrate=c[5], demo=bool(c[6]))
         for row in conn.execute(f"SELECT axis, {', '.join(_SERVO_COLS)} FROM servo_settings "
                                 "WHERE camera_id = ?", (c[0],)):
             setattr(cfg, row[0], ServoSettings(row[0], *row[1:]))

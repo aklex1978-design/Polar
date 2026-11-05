@@ -14,6 +14,12 @@ from polar_app.ui.main_window import MainWindow  # noqa: E402
 from polar_core import cameras as cm  # noqa: E402
 
 import fakes  # noqa: E402
+from demo_data import seed_demo  # noqa: E402
+from polar_core import db  # noqa: E402
+
+
+def no_ros():
+    raise ImportError("No module named 'rclpy'")
 
 
 @pytest.fixture(scope="module")
@@ -33,9 +39,10 @@ def wait(seconds, until=None):
 
 @pytest.fixture
 def win(app, tmp_path):
-    ctx = fakes.bind(build_context(str(tmp_path / "polar.sqlite"), sim=True, demo=True,
-                                   video_options=fakes.video_options()))
-    w = MainWindow(ctx, "тест")
+    path = str(tmp_path / "polar.sqlite")
+    seed_demo(db.connect(path))
+    ctx = fakes.bind(build_context(path, video_options=fakes.video_options(), ros_factory=no_ros))
+    w = MainWindow(ctx)
     w.show()
     yield w
     w.close()
@@ -178,3 +185,40 @@ def test_new_camera_form_has_no_stale_frame(win):
     win.edit_camera(None)
     wait(0.5)
     assert win.form.frame_info.text() == "" and win.form.preview.pixmap().isNull()
+
+
+def test_demo_checkboxes_in_form(win):
+    win.cameras.add_btn.click()
+    f = win.form
+    f.widgets["name"].setText("Без обладнання")
+    for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
+        f.widgets[k].setText(v)
+    f.widgets["address"].setText("")
+    assert "address" in f.validate()
+    f.widgets["demo_video"].setChecked(True)
+    f.widgets["demo_servos"].setChecked(True)
+    assert "address" not in f.validate() and f.save_btn.isEnabled()
+    assert f.save()
+    rec = [r for r in win.ctx.records() if r.name == "Без обладнання"][0]
+    assert rec.demo_video and rec.demo_servos
+    assert wait(6, lambda: win.ctx.control.status(rec.name).link_ok)       # імітатор сервоприводів
+    assert wait(6, lambda: win.ctx.video.stats(rec.name) and win.ctx.video.stats(rec.name).frames > 3)
+
+
+def test_demo_toggle_on_control_screen(win):
+    win.stack.setCurrentWidget(win.control)
+    win.control.select_camera("Камера 2")
+    c = win.control
+    assert c.demo_servos.isChecked() and not c.demo_video.isChecked()
+    assert wait(3, lambda: "демо" in c.camera_list.item(1).text())
+    c.demo_servos.setChecked(False)                    # без ROS 2 — немає звʼязку і підказка
+    assert not win.ctx.camera(win.ctx.control.config("Камера 2").camera_id).demo_servos
+    assert wait(4, lambda: "ROS 2 недоступний" in c.error_label.text()), c.error_label.text()
+    c.go_btn.setEnabled(True)
+    c.go_btn.click()
+    assert "ROS 2 недоступний" in c.message.text()
+    c.demo_servos.setChecked(True)
+    assert wait(4, lambda: win.ctx.control.status("Камера 2").link_ok)
+    c.demo_video.setChecked(True)
+    assert win.ctx.camera(win.ctx.control.config("Камера 2").camera_id).demo_video
+    assert wait(5, lambda: win.ctx.video.latest("Камера 2") is not None)

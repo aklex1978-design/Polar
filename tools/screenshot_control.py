@@ -18,9 +18,13 @@ import fakes  # noqa: E402
 out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
 os.makedirs(out_dir, exist_ok=True)
 app = QApplication([])
-ctx = fakes.bind(build_context(os.path.join(tempfile.mkdtemp(), "demo.sqlite"), sim=True, demo=True,
-                               video_options=fakes.video_options()))
-win = MainWindow(ctx, "імітатор сервоприводів")
+from demo_data import seed_demo  # noqa: E402
+from polar_core import db  # noqa: E402
+
+path = os.path.join(tempfile.mkdtemp(), "demo.sqlite")
+seed_demo(db.connect(path))                       # сервоприводи камер — демо (у CI немає Raspberry Pi)
+ctx = fakes.bind(build_context(path, video_options=fakes.video_options()))
+win = MainWindow(ctx)
 win.resize(1180, 1000)
 win.show()
 

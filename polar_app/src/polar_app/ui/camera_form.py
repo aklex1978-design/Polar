@@ -5,7 +5,7 @@ import copy
 from typing import Dict, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from polar_core import cameras as cm
@@ -32,6 +32,7 @@ FIELDS = [
     ("Розміщення", "north_offset_deg", "Зміщення нуля датчика від півночі, ° *", "float",
      dict(lo=0, hi=359.99, dec=2)),
     ("Розміщення", "tilt_deg", "Нахил камери відносно вертикалі, ° *", "float", dict(lo=-180, hi=180, dec=2)),
+    ("Відеопотік", "demo_video", "Демо відео", "check", dict(text="синтетична сцена замість потоку камери")),
     ("Відеопотік", "protocol", "Протокол *", "combo", dict(items=[(p, p) for p in PROTOCOLS])),
     ("Відеопотік", "address", "Адреса *", "text", dict(ph="rtsp://192.168.1.10:554/stream1")),
     ("Відеопотік", "login", "Логін", "text", {}),
@@ -45,6 +46,8 @@ FIELDS = [
     ("Відеопотік", "transport", "Транспорт *", "combo", dict(items=[(t, t) for t in TRANSPORTS])),
     ("Відеопотік", "buffer_ms", "Буфер, мс", "int", dict(lo=0, hi=10000)),
     ("Відеопотік", "video_latency_ms", "Затримка відео відносно датчика, мс", "int", dict(lo=0, hi=5000)),
+    ("Управління", "demo_servos", "Демо сервоприводів", "check",
+     dict(text="імітатор замість Raspberry Pi і ROS 2")),
     ("Управління", "ros_namespace", "Простір імен ROS 2 *", "text", dict(ph="camera_1")),
     ("Управління", "az_min", "Межі азимуту, ° (мін)", "optfloat", dict(ph="без меж")),
     ("Управління", "az_max", "Межі азимуту, ° (макс)", "optfloat", dict(ph="без меж")),
@@ -60,6 +63,8 @@ HINTS = {
     "video_latency_ms": "вимірюється кнопкою «Виміряти затримку»; кути для кадру беруться на цей час раніше",
     "max_detection_latency_ms": "від кадру до запису цілі в таблицю; якщо перевищена — попередження",
     "az_min": "порожньо — без меж (ковзний контакт)",
+    "demo_video": "для перевірки без камери: кадри малюються за кутами камери; адреса потоку не потрібна",
+    "demo_servos": "для перевірки без Raspberry Pi: сервоприводи імітуються на сервері",
 }
 
 
@@ -163,6 +168,8 @@ class CameraForm(QWidget):
             w.setRange(opt["lo"], opt["hi"])
             w.setDecimals(opt.get("dec", 2))
             return w
+        if kind == "check":
+            return QCheckBox(opt.get("text", ""))
         if kind == "combo":
             w = QComboBox()
             for value, text in opt["items"]:
@@ -172,7 +179,7 @@ class CameraForm(QWidget):
 
     def _connect_change(self, w: QWidget) -> None:
         sig = {QLineEdit: "textChanged", QSpinBox: "valueChanged", QDoubleSpinBox: "valueChanged",
-               QComboBox: "currentIndexChanged"}[type(w)]
+               QComboBox: "currentIndexChanged", QCheckBox: "toggled"}[type(w)]
         getattr(w, sig).connect(lambda *_: self.validate())
 
     def _build_buttons(self) -> QHBoxLayout:
@@ -234,6 +241,8 @@ class CameraForm(QWidget):
                 w.setText("" if value is None else (f"{value:g}" if isinstance(value, float) else str(value)))
             elif isinstance(w, QComboBox):
                 w.setCurrentIndex(max(0, w.findData(value)))
+            elif isinstance(w, QCheckBox):
+                w.setChecked(bool(value))
             else:
                 w.setValue(value)
         self._loading = False
@@ -258,6 +267,8 @@ class CameraForm(QWidget):
                 setattr(rec, attr, w.text().strip())
             elif isinstance(w, QComboBox):
                 setattr(rec, attr, w.currentData())
+            elif isinstance(w, QCheckBox):
+                setattr(rec, attr, w.isChecked())
             else:
                 setattr(rec, attr, w.value())
         return rec
@@ -273,6 +284,7 @@ class CameraForm(QWidget):
             lab.setVisible(attr in errs)
         self.save_btn.setEnabled(not errs)
         self.check_btn.setEnabled("address" not in errs and "protocol" not in errs)
+        self.latency_btn.setEnabled(self.rec.id is not None)
         return errs
 
     def _protocol_hint(self) -> None:

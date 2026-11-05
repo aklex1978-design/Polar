@@ -1,4 +1,4 @@
-"""Демонстраційна база: три камери для запуску без обладнання (--demo)."""
+"""Тестова база: три камери (сервоприводи — демо)."""
 from __future__ import annotations
 
 import sqlite3
@@ -20,6 +20,6 @@ def seed_demo(conn: sqlite3.Connection) -> None:
         for name, north, ns, lat, lon, proto, url in DEMO_CAMERAS:
             conn.execute("INSERT INTO cameras (name, model, resolution_x, resolution_y, fov_x_deg, fov_y_deg, "
                          "north_offset_deg, ros_namespace, latitude, longitude, altitude_m, stream_protocol, "
-                         "stream_url, stream_codec) "
-                         "VALUES (?, 'демо', 1920, 1080, 60, 34, ?, ?, ?, ?, 180, ?, ?, ?)",
+                         "stream_url, stream_codec, demo_servos) "
+                         "VALUES (?, 'демо', 1920, 1080, 60, 34, ?, ?, ?, ?, 180, ?, ?, ?, 1)",
                          (name, north, ns, lat, lon, proto, url, "MJPEG" if proto == "USB" else "H.264"))
