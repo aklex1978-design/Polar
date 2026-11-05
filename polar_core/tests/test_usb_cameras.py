@@ -39,7 +39,7 @@ def test_list_from_sysfs(tmp_path):
         d.mkdir()
         (d / "name").write_text(name + "\n")
         (d / "index").write_text(index + "\n")
-    cams = u.list_usb_cameras(sysfs=str(tmp_path), modes_for=lambda dev: u.parse_v4l2_formats(V4L2)
+    cams = u.list_usb_cameras(sysfs=str(tmp_path), platform="linux", modes_for=lambda dev: u.parse_v4l2_formats(V4L2)
                               if dev == "/dev/video0" else [])
     assert [(c.device, c.name) for c in cams] == [("/dev/video0", "HD Pro Webcam C920"),
                                                   ("/dev/video2", "Thermal Cam")]
