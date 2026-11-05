@@ -15,7 +15,7 @@ out = sys.argv[1] if len(sys.argv) > 1 else "control.png"
 app = QApplication([])
 svc = build_service(os.path.join(tempfile.mkdtemp(), "demo.sqlite"), sim=True, demo=True)
 win = MainWindow(svc, "імітатор")
-win.resize(1100, 860)
+win.resize(1180, 1000)
 win.show()
 svc.backend.set_online("Камера 3", False)
 

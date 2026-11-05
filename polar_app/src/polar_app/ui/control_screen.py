@@ -88,14 +88,7 @@ class ServoColumn:
         h.addWidget(self.min_deg)
         h.addWidget(QLabel("–"))
         h.addWidget(self.max_deg)
-        if self.unlimited:
-            v = QVBoxLayout()
-            box = QWidget()
-            box.setLayout(v)
-            v.setContentsMargins(0, 0, 0, 0)
-            v.addWidget(w)
-            v.addWidget(self.unlimited)
-            return box
+        h.addStretch(1)
         return w
 
     def load(self, s: ServoSettings) -> None:
@@ -152,10 +145,11 @@ class ControlScreen(QWidget):
         splitter.addWidget(self._build_list())
         right = QScrollArea()
         right.setWidgetResizable(True)
+        right.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right.setWidget(self._build_details())
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([230, 720])
+        splitter.setSizes([270, 800])
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addWidget(splitter)
@@ -170,6 +164,7 @@ class ControlScreen(QWidget):
         box = QGroupBox("Камери")
         v = QVBoxLayout(box)
         self.camera_list = QListWidget()
+        self.camera_list.setMinimumWidth(240)
         self.camera_list.currentItemChanged.connect(self._on_select)
         v.addWidget(self.camera_list)
         stop_all = QPushButton("Зупинити всі")
@@ -188,6 +183,7 @@ class ControlScreen(QWidget):
         # поточні кути
         cur = QGroupBox("Поточні кути (від датчика)")
         h = QHBoxLayout(cur)
+        h.setSpacing(28)
         self.cur_az, self.cur_el, self.cur_move = QLabel("Азимут: …"), QLabel("Кут місця: …"), QLabel("Рух: …")
         self.link_label = QLabel("")
         for lab in (self.cur_az, self.cur_el, self.cur_move, self.link_label):
@@ -196,6 +192,7 @@ class ControlScreen(QWidget):
         v.addWidget(cur)
         self.error_label = QLabel("")
         self.error_label.setStyleSheet(f"color: {BAD}")
+        self.error_label.setVisible(False)
         v.addWidget(self.error_label)
 
         # цільові кути
@@ -236,7 +233,8 @@ class ControlScreen(QWidget):
         form.addRow("Крок", self.step)
         form.addRow("Швидкість", self.speed)
         g.addLayout(form, 0, 3, 3, 1)
-        g.setColumnStretch(4, 1)
+        g.setColumnMinimumWidth(4, 24)
+        g.setColumnStretch(6, 1)
         self.stop_btn = QPushButton("Стоп")
         self.stop_btn.setMinimumSize(120, 44)
         self.stop_btn.setStyleSheet(f"QPushButton {{ background: {BAD}; color: white; font-weight: 700;"
@@ -258,6 +256,7 @@ class ControlScreen(QWidget):
         box = QGroupBox("Сервоприводи ST3020")
         v = QVBoxLayout(box)
         bus = QHBoxLayout()
+        bus2 = QHBoxLayout()
         self.port = QLineEdit()
         self.port.setPlaceholderText("/dev/serial0")
         self.baud = QComboBox()
@@ -271,9 +270,11 @@ class ControlScreen(QWidget):
         bus.addWidget(self.port, 1)
         bus.addWidget(QLabel("Швидкість обміну, біт/с"))
         bus.addWidget(self.baud)
-        bus.addWidget(self.scan_btn)
-        bus.addWidget(self.set_id_btn)
+        bus2.addWidget(self.scan_btn)
+        bus2.addWidget(self.set_id_btn)
+        bus2.addStretch(1)
         v.addLayout(bus)
+        v.addLayout(bus2)
 
         self.cols = {axis: ServoColumn(axis) for axis in AXES}
         g = QGridLayout()
@@ -291,6 +292,8 @@ class ControlScreen(QWidget):
         g.addWidget(QLabel("Межі кута, °"), r, 0)
         for c, axis in enumerate(AXES, start=1):
             g.addWidget(self.cols[axis].limits_widget(), r, c)
+        r += 1
+        g.addWidget(self.cols["pan"].unlimited, r, 1)
         r += 1
         g.addWidget(QLabel("<b>Телеметрія (наживо)</b>"), r, 0)
         r += 1
@@ -375,6 +378,7 @@ class ControlScreen(QWidget):
         self.link_label.setText(st.link_text)
         self.link_label.setStyleSheet(f"color: {GOOD if st.link_ok else BAD}")
         self.error_label.setText(st.error_text)
+        self.error_label.setVisible(bool(st.error_text))
         cfg = self.service.config(st.name)
         self.cols["pan"].show_telemetry(st.pan, cfg.pan.temperature_limit_c)
         self.cols["tilt"].show_telemetry(st.tilt, cfg.tilt.temperature_limit_c)
