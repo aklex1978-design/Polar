@@ -354,9 +354,10 @@ class CalibrationScreen(QWidget):
         if sf is not None:
             size = (sf.image.shape[1], sf.image.shape[0])
             if size != self._img_size:
-                if self._center_img is not None and self._img_size:
-                    self._center_img = (self._center_img[0] * size[0] / self._img_size[0],
-                                        self._center_img[1] * size[1] / self._img_size[1])
+                old = self._size()                  # до першого кадру — розмір із параметрів камери
+                if self._center_img is not None:
+                    self._center_img = (self._center_img[0] * size[0] / old[0],
+                                        self._center_img[1] * size[1] / old[1])
                 self._img_size = size
             self.view.pixmap = frame_pixmap(sf.image)
         m = self.model()
