@@ -17,7 +17,11 @@ class UsbCameraDialog(QDialog):
         self.used = used
         v = QVBoxLayout(self)
         if not cameras:
-            v.addWidget(QLabel("До сервера не підключено жодної USB-камери."))
+            hint = QLabel("USB-камер не знайдено. Перевірте, що камеру підключено і її бачить система. "
+                          "Камеру, відкриту іншою програмою (Zoom, Teams, браузер), Windows може не віддати — "
+                          "закрийте ту програму і натисніть «Отримати список камер» ще раз.")
+            hint.setWordWrap(True)
+            v.addWidget(hint)
         self.table = QTableWidget(len(cameras), 3)
         self.table.setHorizontalHeaderLabels(["Пристрій", "Назва", "У Polar"])
         self.table.verticalHeader().setVisible(False)

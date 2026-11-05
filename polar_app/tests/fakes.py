@@ -28,7 +28,7 @@ class FakeStreams:
         return lambda: SimVideoCapture(cam, angles, fps=rec.fps, delay_s=VIDEO_DELAY_S)
 
 
-def usb_cameras():
+def usb_cameras(in_use=None):
     return [
         UsbCamera("/dev/video0", "Тест: HD USB Camera", "/dev/v4l/by-id/usb-test_HD_USB_Camera-video-index0",
                   [VideoMode(1920, 1080, 30.0, "MJPG"), VideoMode(1280, 720, 60.0, "MJPG"),

@@ -56,3 +56,38 @@ def test_stable_address_is_valid():
 def test_real_system_does_not_crash():
     assert isinstance(u.list_usb_cameras(), list)
     assert os.path  # список на цій машині може бути порожнім
+
+
+def test_windows_listing_keeps_busy_camera():
+    """Камеру 0 уже показує Polar — повторно вона не відкривається, але має бути у списку."""
+    opened = []
+
+    def probe(i, try_sizes=False):
+        opened.append(i)
+        return (False, []) if i == 0 else (True, [u.VideoMode(1280, 720, 30.0)])
+    cams = u.list_usb_cameras(platform="win32", names_for=lambda: (["Integrated Webcam", "USB Camera"], True),
+                              in_use={"0": u.VideoMode(640, 480, 30.0)}, probe=probe)
+    assert [(c.device, c.name) for c in cams] == [("0", "Integrated Webcam"), ("1", "USB Camera")]
+    assert cams[0].modes == [u.VideoMode(640, 480, 30.0)] and opened == [1]   # зайнята не відкривалась
+    assert cams[1].best_mode().width == 1280
+
+
+def test_windows_listing_exact_names_without_modes():
+    cams = u.list_usb_cameras(platform="win32", names_for=lambda: (["Cam A"], True),
+                              probe=lambda i, try_sizes=False: (False, []))
+    assert [(c.device, c.name, c.modes) for c in cams] == [("0", "Cam A", [])]
+
+
+def test_windows_listing_by_probe_when_names_unknown():
+    cams = u.list_usb_cameras(platform="win32", names_for=lambda: (["Webcam"], False),
+                              probe=lambda i, try_sizes=False: (i in (0, 2), [u.VideoMode(640, 480, 30.0)]))
+    assert [(c.device, c.name) for c in cams] == [("0", "Webcam (назва орієнтовна)"), ("2", "USB-камера 2")]
+
+
+def test_usb_backends():
+    class CV:
+        CAP_DSHOW, CAP_MSMF, CAP_AVFOUNDATION, CAP_V4L2, CAP_ANY = 700, 1400, 1200, 200, 0
+    from polar_core.video import usb_backends
+    assert usb_backends(CV, "win32") == [700, 1400]
+    assert usb_backends(CV, "linux") == [200, 0]
+    assert usb_backends(CV, "darwin") == [1200]

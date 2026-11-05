@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 import urllib.parse
@@ -189,15 +190,34 @@ class VideoSource:
 _OPEN_LOCK = threading.Lock()   # параметри FFmpeg задаються змінною оточення — одна камера за раз
 
 
-def opencv_opener(target: Union[int, str], options: str = "") -> Callable[[], object]:
+def usb_backends(cv2, platform: str = sys.platform) -> list:
+    """Бекенди OpenCV для USB-камер у порядку спроб. FFmpeg для USB не годиться: він не відкриває
+    /dev/videoN без формату v4l2, а на Windows — номер пристрою."""
+    if platform.startswith("win"):
+        return [cv2.CAP_DSHOW, cv2.CAP_MSMF]     # номери DirectShow збігаються зі списком камер
+    if platform == "darwin":
+        return [cv2.CAP_AVFOUNDATION]
+    return [cv2.CAP_V4L2, cv2.CAP_ANY]
+
+
+def opencv_opener(target: Union[int, str], options: str = "", usb: bool = False) -> Callable[[], object]:
     """Фабрика cv2.VideoCapture для VideoSource."""
     def open_capture():
         import cv2
 
+        if usb:
+            dev = int(target) if isinstance(target, str) and target.isdigit() else target
+            cap = None
+            for backend in usb_backends(cv2):
+                cap = cv2.VideoCapture(dev, backend)
+                if cap.isOpened():
+                    break
+                cap.release()
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            return cap
         with _OPEN_LOCK:
-            if isinstance(target, str):
-                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
-            cap = cv2.VideoCapture(target, cv2.CAP_FFMPEG if isinstance(target, str) else cv2.CAP_ANY)
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
+            cap = cv2.VideoCapture(target, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
     return open_capture

@@ -99,3 +99,24 @@ def test_demo_camera_1_is_real_usb(env):
     assert (rec.protocol, rec.address) == ("USB", "0")
     from polar_core.video import capture_target
     assert capture_target(rec) == 0                     # OpenCV відкриє першу USB-камеру компʼютера
+
+
+def test_usb_list_reports_devices_in_use(env):
+    ctl, vs, backend, conn = env
+    seen = {}
+    vs._usb_lister = lambda in_use=None: seen.update(in_use or {}) or []
+    assert wait(5, lambda: vs.stats("Камера 1") and vs.stats("Камера 1").frame_size)
+    assert vs.list_usb_cameras().result(timeout=5) == []
+    assert "0" in seen and seen["0"].width == 640              # Камера 1 (USB 0) зайнята потоком Polar
+
+
+def test_check_connection_reuses_running_usb_stream(env):
+    ctl, vs, backend, conn = env
+    assert wait(5, lambda: vs.stats("Камера 1") and vs.stats("Камера 1").connected)
+    opened = []
+    real_factory = vs._open_factory
+    vs._open_factory = lambda rec, pw: opened.append(rec.name) or real_factory(rec, pw)
+    rec = cm.CameraRecord(name="Нова USB", protocol="USB", address="0")
+    img, size, fps = vs.check_connection(rec, seconds=0.5).result(timeout=10)
+    assert size == (640, 360) and opened == []                 # пристрій вдруге не відкривався
+    vs._open_factory = real_factory

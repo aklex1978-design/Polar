@@ -109,3 +109,10 @@ def test_wrong_key(env):
     cid, _ = cm.save_camera(conn, rec(password="x"), box)
     with pytest.raises(ValueError):
         cm.stream_password(conn, SecretBox.for_database(":memory:"), cid)
+
+
+def test_same_usb_device_twice_is_an_error(env):
+    conn, box, _ = env
+    cm.save_camera(conn, rec(protocol="USB", address="0"), box)
+    errs = rec(name="Друга", ros_namespace="camera_2", protocol="USB", address="0").validate(cm.list_cameras(conn))
+    assert "вже використовує «Камера 1»" in errs["address"]

@@ -27,7 +27,7 @@ def real_opener(rec: CameraRecord, password: str) -> Callable[[], object]:
     def open_capture():
         target = capture_target(rec, password)      # ONVIF: адреса потоку питається щоразу
         open_capture.label = redact(target)
-        return opencv_opener(target, opts)()
+        return opencv_opener(target, opts, usb=rec.protocol == "USB")()
     return open_capture
 
 
@@ -162,6 +162,14 @@ class VideoService:
                 password = cm.stream_password(self.conn, self.box, rec.id)
         return VideoSource(self._open_factory(rec, password), rec.name, on_event=on_event)
 
+    def _running_usb(self, rec: CameraRecord) -> Optional[_Pipeline]:
+        if rec.protocol != "USB":
+            return None
+        for p in list(self._pipes.values()):
+            if p.rec.protocol == "USB" and p.rec.address.strip() == rec.address.strip() and p.source.connected:
+                return p
+        return None
+
     # --- стан ----------------------------------------------------------------------
     def latest(self, name: str) -> Optional[StampedFrame]:
         p = self._pipes.get(name)
@@ -179,6 +187,21 @@ class VideoService:
     def check_connection(self, rec: CameraRecord, seconds: float = 2.0, timeout: float = 15.0) -> Future:
         """Відкрити потік за даними форми (ще не збереженими). Результат: (кадр, (ш, в), кадрів/с)."""
         out: Future = Future()
+
+        shared = self._running_usb(rec)
+        if shared is not None:
+            # пристрій уже показує Polar — USB-камеру не можна відкрити вдруге, беремо кадри з її потоку
+            def run_shared():
+                try:
+                    f = shared.source.wait_frame(timeout=timeout)
+                    if f is None:
+                        raise IOError(shared.source.last_error or "кадри не надходять")
+                    time.sleep(min(seconds, 1.0))
+                    out.set_result((f.image, (f.image.shape[1], f.image.shape[0]), shared.source.fps))
+                except Exception as e:  # noqa: BLE001
+                    out.set_exception(e)
+            threading.Thread(target=run_shared, name="check-connection", daemon=True).start()
+            return out
 
         def run():
             src = self._make_source(rec)
@@ -211,12 +234,19 @@ class VideoService:
         """USB-камери, підключені до сервера. Результат: список polar_core.usb_cameras.UsbCamera."""
         from polar_core.usb_cameras import list_usb_cameras
 
+        from polar_core.usb_cameras import VideoMode
+
         out: Future = Future()
         lister = self._usb_lister or list_usb_cameras
+        in_use = {}
+        for p in list(self._pipes.values()):
+            if p.rec.protocol == "USB" and p.source.frame_size:
+                w, h = p.source.frame_size
+                in_use[p.rec.address.strip()] = VideoMode(w, h, round(p.source.fps or p.rec.fps, 1))
 
         def run():
             try:
-                out.set_result(lister())
+                out.set_result(lister(in_use=in_use))
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)
         threading.Thread(target=run, name="usb-list", daemon=True).start()

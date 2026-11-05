@@ -100,6 +100,11 @@ class CameraRecord:
         addr_error = address_error(self.protocol, self.address)
         if addr_error:
             e["address"] = addr_error
+        elif self.protocol == "USB":
+            twin = next((o for o in others if o.protocol == "USB" and o.id != self.id
+                         and o.address.strip() == self.address.strip()), None)
+            if twin is not None:
+                e["address"] = f"цю USB-камеру вже використовує «{twin.name}»"
         if self.stream_kind not in STREAM_KINDS:
             e["stream_kind"] = "оберіть зі списку"
         if self.codec not in CODECS:
