@@ -20,7 +20,7 @@ class CameraRecord:
     # Загальне
     name: str = ""
     model: str = ""
-    # Оптика
+    # Оптика (роздільна здатність кадру — у групі «Відеопотік»; resolution_x/y у базі дублює її)
     resolution_x: int = 1920
     resolution_y: int = 1080
     fov_x_deg: float = 60.0
@@ -43,7 +43,7 @@ class CameraRecord:
     password: Optional[str] = None          # None — не змінювати збережений
     stream_kind: str = "main"
     codec: str = "H.264"
-    stream_res_x: Optional[int] = None      # None — як у камери
+    stream_res_x: Optional[int] = None      # роздільна здатність кадрів потоку; заповнює «Перевірити зʼєднання»
     stream_res_y: Optional[int] = None
     fps: float = 25.0
     max_detection_latency_ms: int = 500
@@ -82,9 +82,6 @@ class CameraRecord:
             e["name"] = "обовʼязкове поле"
         elif any(o.name.strip().lower() == self.name.strip().lower() and o.id != self.id for o in others):
             e["name"] = "камера з такою назвою вже є"
-        for f in ("resolution_x", "resolution_y"):
-            if not isinstance(getattr(self, f), int) or getattr(self, f) <= 0:
-                e[f] = "ціле число більше 0"
         for f in ("fov_x_deg", "fov_y_deg"):
             if not 0 < getattr(self, f) <= 180:
                 e[f] = "0–180°"
@@ -115,8 +112,10 @@ class CameraRecord:
             e["codec"] = "оберіть зі списку"
         for f in ("stream_res_x", "stream_res_y"):
             v = getattr(self, f)
-            if v is not None and v <= 0:
-                e[f] = "більше 0 або порожньо"
+            if v is None:
+                e[f] = "обовʼязкове поле — заповнює «Перевірити зʼєднання»"
+            elif not isinstance(v, int) or v <= 0:
+                e[f] = "ціле число більше 0"
         if not self.fps > 0:
             e["fps"] = "більше 0"
         if self.max_detection_latency_ms <= 0:
@@ -203,6 +202,8 @@ def get_camera(conn: sqlite3.Connection, camera_id: int) -> CameraRecord:
         rec.max_speed_deg_s = min(rec.max_speed_deg_s, tilt[2]) if pan else tilt[2]
     if not rec.ros_namespace:
         rec.ros_namespace = f"camera_{camera_id}"
+    if rec.stream_res_x is None or rec.stream_res_y is None:   # камери, збережені до цієї зміни
+        rec.stream_res_x, rec.stream_res_y = rec.resolution_x, rec.resolution_y
     return rec
 
 
@@ -217,6 +218,7 @@ def save_camera(conn: sqlite3.Connection, rec: CameraRecord, box: SecretBox) -> 
     if errors:
         raise ValueError("; ".join(f"{k}: {v}" for k, v in errors.items()))
     rec.ros_namespace = rec.ros_namespace.strip("/")
+    rec.resolution_x, rec.resolution_y = rec.stream_res_x, rec.stream_res_y   # одне джерело — потік
     values = {col: getattr(rec, attr) for attr, col in _COLS.items()}
     stale = False
     with conn:

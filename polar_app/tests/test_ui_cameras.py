@@ -194,6 +194,8 @@ def test_demo_checkboxes_in_form(win):
     for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
         f.widgets[k].setText(v)
     f.widgets["address"].setText("")
+    f.widgets["stream_res_x"].setText("1280")
+    f.widgets["stream_res_y"].setText("720")
     assert "address" in f.validate()
     f.widgets["demo_video"].setChecked(True)
     f.widgets["demo_servos"].setChecked(True)
@@ -222,3 +224,15 @@ def test_demo_toggle_on_control_screen(win):
     c.demo_video.setChecked(True)
     assert win.ctx.camera(win.ctx.control.config("Камера 2").camera_id).demo_video
     assert wait(5, lambda: win.ctx.video.latest("Камера 2") is not None)
+
+
+def test_check_connection_fills_resolution(win):
+    win.cameras.add_btn.click()
+    f = win.form
+    assert "resolution_x" not in f.widgets                     # у «Оптиці» роздільної здатності немає
+    assert f.errors["stream_res_x"].isVisible()                # обовʼязкова, поки порожня
+    f.widgets["address"].setText("rtsp://10.0.0.20/stream1")
+    f.check_btn.click()
+    assert wait(15, lambda: "Зʼєднання працює" in f.message.text()), f.message.text()
+    assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("640", "360")
+    assert not f.errors["stream_res_x"].isVisible()

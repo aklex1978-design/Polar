@@ -17,8 +17,6 @@ from .common import BAD, GOOD, QUIET, WARN, FutureBridge, frame_pixmap
 FIELDS = [
     ("Загальне", "name", "Назва *", "text", {}),
     ("Загальне", "model", "Модель", "text", {}),
-    ("Оптика", "resolution_x", "Роздільна здатність X, px *", "int", dict(lo=1, hi=20000)),
-    ("Оптика", "resolution_y", "Роздільна здатність Y, px *", "int", dict(lo=1, hi=20000)),
     ("Оптика", "fov_x_deg", "Кут огляду X (HFOV), ° *", "float", dict(lo=0.1, hi=180, dec=2)),
     ("Оптика", "fov_y_deg", "Кут огляду Y (VFOV), ° *", "float", dict(lo=0.1, hi=180, dec=2)),
     ("Оптика", "k1", "Дисторсія k1", "float", dict(lo=-10, hi=10, dec=5)),
@@ -39,8 +37,10 @@ FIELDS = [
     ("Відеопотік", "password", "Пароль", "password", {}),
     ("Відеопотік", "stream_kind", "Потік *", "combo", dict(items=list(STREAM_KINDS.items()))),
     ("Відеопотік", "codec", "Кодек *", "combo", dict(items=[(c, c) for c in CODECS])),
-    ("Відеопотік", "stream_res_x", "Роздільна здатність потоку X, px", "optint", dict(ph="як у камери")),
-    ("Відеопотік", "stream_res_y", "Роздільна здатність потоку Y, px", "optint", dict(ph="як у камери")),
+    ("Відеопотік", "stream_res_x", "Роздільна здатність X, px *", "optint",
+     dict(ph="заповнює «Перевірити зʼєднання»")),
+    ("Відеопотік", "stream_res_y", "Роздільна здатність Y, px *", "optint",
+     dict(ph="заповнює «Перевірити зʼєднання»")),
     ("Відеопотік", "fps", "Кадрів/с *", "float", dict(lo=0.1, hi=240, dec=1)),
     ("Відеопотік", "max_detection_latency_ms", "Допустима затримка виявлення, мс", "int", dict(lo=1, hi=60000)),
     ("Відеопотік", "transport", "Транспорт *", "combo", dict(items=[(t, t) for t in TRANSPORTS])),
@@ -332,10 +332,12 @@ class CameraForm(QWidget):
                 self._say(f"Зʼєднання не вдалося: {e}", BAD)
                 return
             self._check_pixmap = frame_pixmap(img)
-            want = rec.frame_size
             notes = []
-            if (w, h) != want:
-                notes.append(f"очікувалось {want[0]}×{want[1]}")
+            if (rec.stream_res_x, rec.stream_res_y) != (w, h):
+                if rec.stream_res_x is not None:
+                    notes.append(f"роздільну здатність змінено з {rec.stream_res_x}×{rec.stream_res_y}")
+                self.widgets["stream_res_x"].setText(str(w))      # фактична роздільна здатність потоку
+                self.widgets["stream_res_y"].setText(str(h))
             if fps and abs(fps - rec.fps) > max(1.0, rec.fps * 0.2):
                 notes.append(f"у формі {rec.fps:g} кадрів/с")
             text = f"Зʼєднання працює: {w}×{h}, {fps:.1f} кадрів/с"

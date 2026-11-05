@@ -7,7 +7,8 @@ from polar_core.secrets import SecretBox
 
 def rec(**kw):
     base = dict(name="Камера 1", latitude=50.45, longitude=30.52, altitude_m=180.0, protocol="RTSP",
-                address="rtsp://192.168.1.10:554/stream1", ros_namespace="camera_1")
+                address="rtsp://192.168.1.10:554/stream1", ros_namespace="camera_1", stream_res_x=1920,
+                stream_res_y=1080)
     base.update(kw)
     return cm.CameraRecord(**base)
 
@@ -24,7 +25,8 @@ def test_valid_record():
 
 @pytest.mark.parametrize("kw,field", [
     (dict(name=" "), "name"),
-    (dict(resolution_x=0), "resolution_x"),
+    (dict(stream_res_x=0), "stream_res_x"),
+    (dict(stream_res_y=None), "stream_res_y"),
     (dict(fov_x_deg=200), "fov_x_deg"),
     (dict(latitude=None), "latitude"),
     (dict(longitude=181), "longitude"),
@@ -116,3 +118,14 @@ def test_same_usb_device_twice_is_an_error(env):
     cm.save_camera(conn, rec(protocol="USB", address="0"), box)
     errs = rec(name="Друга", ros_namespace="camera_2", protocol="USB", address="0").validate(cm.list_cameras(conn))
     assert "вже використовує «Камера 1»" in errs["address"]
+
+
+def test_resolution_has_one_source(env):
+    conn, box, _ = env
+    cid, _ = cm.save_camera(conn, rec(stream_res_x=1280, stream_res_y=720), box)
+    row = conn.execute("SELECT resolution_x, resolution_y, stream_res_x FROM cameras WHERE id = ?", (cid,)).fetchone()
+    assert tuple(row) == (1280, 720, 1280)
+    with conn:                                   # камера, збережена раніше без роздільної здатності потоку
+        conn.execute("UPDATE cameras SET stream_res_x = NULL, stream_res_y = NULL WHERE id = ?", (cid,))
+    got = cm.get_camera(conn, cid)
+    assert (got.stream_res_x, got.stream_res_y) == (1280, 720)
