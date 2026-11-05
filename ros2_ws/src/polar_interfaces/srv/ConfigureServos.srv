@@ -1,0 +1,10 @@
+# Застосувати налаштування шини й обох сервоприводів камери. Порожній port — не змінювати.
+string port
+uint32 baudrate
+ServoSettings pan
+ServoSettings tilt
+float64 state_rate_hz
+float64 link_timeout_s
+---
+bool success
+string message

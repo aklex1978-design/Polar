@@ -108,14 +108,20 @@ MIGRATIONS = [
         message   TEXT NOT NULL DEFAULT ''
     );
     """,
+    # 2 — етап 1: шина сервоприводів камери і передавальне число
+    """
+    ALTER TABLE cameras ADD COLUMN servo_port TEXT NOT NULL DEFAULT '/dev/serial0';
+    ALTER TABLE cameras ADD COLUMN servo_baudrate INTEGER NOT NULL DEFAULT 1000000;
+    ALTER TABLE servo_settings ADD COLUMN gear_ratio REAL NOT NULL DEFAULT 1;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
-def connect(path: Union[str, Path]) -> sqlite3.Connection:
+def connect(path: Union[str, Path], check_same_thread: bool = True) -> sqlite3.Connection:
     """Відкрити базу і довести схему до поточної версії."""
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if str(path) != ":memory:":

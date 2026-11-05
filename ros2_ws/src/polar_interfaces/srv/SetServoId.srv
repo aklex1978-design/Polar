@@ -1,0 +1,6 @@
+# Змінити ID сервопривода на шині (на шині має бути лише один сервопривід з old_id).
+uint8 old_id
+uint8 new_id
+---
+bool success
+string message
