@@ -1,4 +1,5 @@
-"""Знімки екранів з імітатором (для перевірки вигляду в CI): керування, список камер, форма камери."""
+"""Знімки екранів для перевірки вигляду в CI: керування, список камер, форма камери.
+Сервоприводи — імітатор; відео — тестові підміни з polar_app/tests/fakes.py (у CI немає камер)."""
 import os
 import sys
 import tempfile
@@ -11,11 +12,15 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 from polar_app.__main__ import build_context  # noqa: E402
 from polar_app.ui.main_window import MainWindow  # noqa: E402
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "polar_app", "tests"))
+import fakes  # noqa: E402
+
 out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
 os.makedirs(out_dir, exist_ok=True)
 app = QApplication([])
-ctx = build_context(os.path.join(tempfile.mkdtemp(), "demo.sqlite"), sim=True, demo=True)
-win = MainWindow(ctx, "імітатор")
+ctx = fakes.bind(build_context(os.path.join(tempfile.mkdtemp(), "demo.sqlite"), sim=True, demo=True,
+                               video_options=fakes.video_options()))
+win = MainWindow(ctx, "імітатор сервоприводів")
 win.resize(1180, 1000)
 win.show()
 

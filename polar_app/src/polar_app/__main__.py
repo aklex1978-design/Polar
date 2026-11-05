@@ -11,7 +11,8 @@ from polar_core.control import load_ros_settings
 from polar_core.secrets import SecretBox
 
 
-def build_context(db_path: str, sim: bool, demo: bool):
+def build_context(db_path: str, sim: bool, demo: bool, video_options: dict = None):
+    """sim — сервоприводи-імітатори (без ROS 2 і Raspberry Pi); відео завжди справжнє."""
     from .context import AppContext
     from .control.service import ControlService
     from .demo import seed_demo
@@ -29,7 +30,7 @@ def build_context(db_path: str, sim: bool, demo: bool):
         backend = RosControlBackend()
     control = ControlService(conn, backend)
     control.start()
-    video = VideoService(control, SecretBox.for_database(db_path), sim=sim)
+    video = VideoService(control, SecretBox.for_database(db_path), **(video_options or {}))
     video.start()
     return AppContext(conn, video.box, control, video)
 
@@ -37,8 +38,10 @@ def build_context(db_path: str, sim: bool, demo: bool):
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="polar", description="Polar — керування камерами")
     p.add_argument("--db", default="polar.sqlite", help="файл бази SQLite")
-    p.add_argument("--sim", action="store_true", help="камери й відео — імітатори замість ROS 2 і потоків")
-    p.add_argument("--demo", action="store_true", help="тимчасова база з трьома камерами")
+    p.add_argument("--sim", action="store_true",
+                   help="сервоприводи-імітатори замість ROS 2 і Raspberry Pi; відео — справжні потоки камер")
+    p.add_argument("--demo", action="store_true",
+                   help="тимчасова база з демо-камерами (Камера 1 — USB-камера 0 цього компʼютера)")
     args = p.parse_args(argv)
     db_path = os.path.join(tempfile.mkdtemp(prefix="polar-demo-"), "polar.sqlite") if args.demo else args.db
 
@@ -51,7 +54,7 @@ def main(argv=None) -> int:
 
     app = QApplication(sys.argv[:1])
     ctx = build_context(db_path, args.sim, args.demo)
-    win = MainWindow(ctx, "імітатор" if args.sim else "")
+    win = MainWindow(ctx, "імітатор сервоприводів" if args.sim else "")
     win.show()
     return app.exec()
 

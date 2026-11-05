@@ -17,7 +17,18 @@ from polar_core.secrets import SecretBox
 from polar_core.sync import AngleHistory, LatencyEstimator, LatencyMonitor, StampedFrame, stamp
 from polar_core.video import VideoSource, capture_target, ffmpeg_options, opencv_opener, redact
 
-SIM_VIDEO_DELAY_S = 0.15          # імітатор: відео відстає від енкодерів, як справжня IP-камера
+OpenFactory = Callable[[CameraRecord, str], Callable[[], object]]
+
+
+def real_opener(rec: CameraRecord, password: str) -> Callable[[], object]:
+    """Справжній потік камери через OpenCV/FFmpeg (RTSP, ONVIF, USB, HTTP)."""
+    opts = ffmpeg_options(rec)
+
+    def open_capture():
+        target = capture_target(rec, password)      # ONVIF: адреса потоку питається щоразу
+        open_capture.label = redact(target)
+        return opencv_opener(target, opts)()
+    return open_capture
 
 
 @dataclass
@@ -77,13 +88,17 @@ class _Pipeline:
 
 
 class VideoService:
-    def __init__(self, control, box: SecretBox, sim: bool = False,
+    def __init__(self, control, box: SecretBox, open_factory: OpenFactory = real_opener,
+                 usb_lister: Optional[Callable[[], list]] = None,
                  clock: Callable[[], float] = time.monotonic) -> None:
+        """open_factory і usb_lister підміняються лише в автоматичних тестах; програма завжди
+        працює зі справжніми потоками камер."""
         self.control = control
         self.conn = control.conn
         self._db_lock = control._db_lock
         self.box = box
-        self.sim = sim
+        self._open_factory = open_factory
+        self._usb_lister = usb_lister
         self._clock = clock
         self._histories: Dict[str, AngleHistory] = {}
         self._pipes: Dict[str, _Pipeline] = {}
@@ -137,37 +152,15 @@ class VideoService:
                 self.conn.execute("INSERT INTO events (camera_id, kind, message) VALUES (?, ?, ?)",
                                   (camera_id, kind, message))
 
-    def _make_source(self, rec: CameraRecord, angles_at=None) -> VideoSource:
+    def _make_source(self, rec: CameraRecord) -> VideoSource:
         on_event = (lambda kind, msg: self._log(rec.id, kind, msg)) if rec.id else None
-        if self.sim:
-            from polar_core.sim import SimCamera, SimVideoCapture, make_scene
-
-            hist = self.history(rec.name)
-
-            def default_angles(t):
-                a = hist.at(t)
-                return (a.azimuth_deg, a.elevation_deg) if a else None
-            w, h = rec.frame_size
-            scale = min(1.0, 640 / w)                 # імітатор малює менші кадри — швидше
-            cam = SimCamera(make_scene(3600, 900, seed=(rec.id or 0) + 7),
-                            resolution=(int(w * scale), int(h * scale)), fov_deg=(rec.fov_x_deg, rec.fov_y_deg))
-            fps = rec.fps
-            return VideoSource(lambda: SimVideoCapture(cam, angles_at or default_angles, fps=fps,
-                                                       delay_s=SIM_VIDEO_DELAY_S),
-                               rec.name, on_event=on_event)
         password = ""
         if rec.password is not None:
             password = rec.password
         elif rec.id and rec.has_password:
             with self._db_lock:
                 password = cm.stream_password(self.conn, self.box, rec.id)
-        opts = ffmpeg_options(rec)
-
-        def open_capture():
-            target = capture_target(rec, password)      # ONVIF: адреса потоку питається щоразу
-            open_capture.label = redact(target)
-            return opencv_opener(target, opts)()
-        return VideoSource(open_capture, rec.name, on_event=on_event)
+        return VideoSource(self._open_factory(rec, password), rec.name, on_event=on_event)
 
     # --- стан ----------------------------------------------------------------------
     def latest(self, name: str) -> Optional[StampedFrame]:
@@ -188,8 +181,7 @@ class VideoService:
         out: Future = Future()
 
         def run():
-            static = (0.0, 20.0)
-            src = self._make_source(rec, angles_at=(lambda t: static) if self.sim else None)
+            src = self._make_source(rec)
             src.name = f"перевірка {rec.name}"
             src._on_event = lambda kind, msg: None
             src.start()
@@ -217,21 +209,14 @@ class VideoService:
     # --- «Отримати список камер» (USB) ---------------------------------------------------
     def list_usb_cameras(self) -> Future:
         """USB-камери, підключені до сервера. Результат: список polar_core.usb_cameras.UsbCamera."""
-        from polar_core.usb_cameras import UsbCamera, VideoMode, list_usb_cameras
+        from polar_core.usb_cameras import list_usb_cameras
 
         out: Future = Future()
-        if self.sim:
-            out.set_result([
-                UsbCamera("/dev/video0", "Імітатор: HD USB Camera", "/dev/v4l/by-id/usb-sim_HD_USB_Camera-video-index0",
-                          [VideoMode(1920, 1080, 30.0, "MJPG"), VideoMode(1280, 720, 60.0, "MJPG"),
-                           VideoMode(640, 480, 30.0, "YUYV")]),
-                UsbCamera("/dev/video2", "Імітатор: Thermal Cam", "", [VideoMode(640, 512, 25.0, "YUYV")]),
-            ])
-            return out
+        lister = self._usb_lister or list_usb_cameras
 
         def run():
             try:
-                out.set_result(list_usb_cameras())
+                out.set_result(lister())
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)
         threading.Thread(target=run, name="usb-list", daemon=True).start()

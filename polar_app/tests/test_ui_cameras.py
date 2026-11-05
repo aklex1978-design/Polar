@@ -13,6 +13,8 @@ from polar_app.__main__ import build_context  # noqa: E402
 from polar_app.ui.main_window import MainWindow  # noqa: E402
 from polar_core import cameras as cm  # noqa: E402
 
+import fakes  # noqa: E402
+
 
 @pytest.fixture(scope="module")
 def app():
@@ -31,7 +33,8 @@ def wait(seconds, until=None):
 
 @pytest.fixture
 def win(app, tmp_path):
-    ctx = build_context(str(tmp_path / "polar.sqlite"), sim=True, demo=True)
+    ctx = fakes.bind(build_context(str(tmp_path / "polar.sqlite"), sim=True, demo=True,
+                                   video_options=fakes.video_options()))
     w = MainWindow(ctx, "тест")
     w.show()
     yield w
@@ -150,10 +153,10 @@ def test_usb_camera_list_fills_form(win):
     d.mode.setCurrentIndex(1)                                            # 1280×720, 60 кадрів/с
     d.accept()
     wait(0.2)
-    assert f.widgets["address"].text() == "/dev/v4l/by-id/usb-sim_HD_USB_Camera-video-index0"
+    assert f.widgets["address"].text() == "/dev/v4l/by-id/usb-test_HD_USB_Camera-video-index0"
     assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("1280", "720")
     assert f.widgets["fps"].value() == 60.0 and f.widgets["codec"].currentData() == "MJPEG"
-    assert f.widgets["model"].text() == "Імітатор: HD USB Camera"
+    assert f.widgets["model"].text() == "Тест: HD USB Camera"
     assert "address" not in f.validate()
     # вже додана камера позначається в списку
     f.widgets["name"].setText("USB 1")

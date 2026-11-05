@@ -5,10 +5,12 @@ import pytest
 from polar_app.control.service import ControlService
 from polar_app.control.sim import SimControlBackend
 from polar_app.demo import seed_demo
-from polar_app.video_service import SIM_VIDEO_DELAY_S, VideoService
+from polar_app.video_service import VideoService
 from polar_core import cameras as cm
 from polar_core import db
 from polar_core.secrets import SecretBox
+
+import fakes
 
 
 def wait(seconds, until):
@@ -28,8 +30,7 @@ def env(tmp_path):
     backend = SimControlBackend()
     ctl = ControlService(conn, backend)
     ctl.start()
-    vs = VideoService(ctl, SecretBox.for_database(path), sim=True)
-    vs.start()
+    vs = fakes.bind(VideoService(ctl, SecretBox.for_database(path), **fakes.video_options()))
     yield ctl, vs, backend, conn
     vs.shutdown()
     ctl.shutdown()
@@ -62,7 +63,7 @@ def test_measure_latency_sim(env):
     ctl, vs, backend, conn = env
     assert wait(5, lambda: ctl.status("Камера 3").link_ok and vs.stats("Камера 3").frames > 5)
     ms, quality = vs.measure_latency("Камера 3").result(timeout=30)
-    assert ms == pytest.approx(SIM_VIDEO_DELAY_S * 1000, abs=45), (ms, quality)
+    assert ms == pytest.approx(fakes.VIDEO_DELAY_S * 1000, abs=45), (ms, quality)
     assert quality > 0.6
     rec = [r for r in cm.list_cameras(conn) if r.name == "Камера 3"][0]
     assert rec.video_latency_ms == ms
@@ -79,7 +80,22 @@ def test_check_connection_sim(env):
 
 def test_check_connection_failure(tmp_path, env):
     ctl, _vs, backend, conn = env
-    real = VideoService(ctl, SecretBox.for_database(tmp_path / "x.sqlite"), sim=False)
+    real = VideoService(ctl, SecretBox.for_database(tmp_path / "x.sqlite"))
     rec = cm.CameraRecord(name="Нема", protocol="HTTP", address="http://127.0.0.1:9/none")
     with pytest.raises(Exception):
         real.check_connection(rec, timeout=3).result(timeout=20)
+
+
+def test_default_is_real_streams(tmp_path, env):
+    ctl, _vs, backend, conn = env
+    from polar_app.video_service import real_opener
+    real = VideoService(ctl, SecretBox.for_database(tmp_path / "y.sqlite"))
+    assert real._open_factory is real_opener and real._usb_lister is None
+
+
+def test_demo_camera_1_is_real_usb(env):
+    ctl, vs, backend, conn = env
+    rec = cm.list_cameras(conn)[0]
+    assert (rec.protocol, rec.address) == ("USB", "0")
+    from polar_core.video import capture_target
+    assert capture_target(rec) == 0                     # OpenCV відкриє першу USB-камеру компʼютера
