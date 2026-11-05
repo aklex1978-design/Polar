@@ -134,6 +134,12 @@ MIGRATIONS = [
     ALTER TABLE cameras ADD COLUMN demo_servos INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE cameras ADD COLUMN demo_video INTEGER NOT NULL DEFAULT 0;
     """,
+    # 5 — етап 3: калібрування — розмір кадру, в якому задано центр, і виміряна похибка розміщення
+    """
+    ALTER TABLE calibration ADD COLUMN frame_w INTEGER;
+    ALTER TABLE calibration ADD COLUMN frame_h INTEGER;
+    ALTER TABLE calibration ADD COLUMN placement_error_deg REAL;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

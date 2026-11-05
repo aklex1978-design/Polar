@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QLabel, QMainWindow, QStackedWidget
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget
 
+from .calibration_screen import CalibrationScreen
 from .camera_form import CameraForm
 from .cameras_screen import CamerasScreen
 from .control_screen import ControlScreen
@@ -21,12 +22,13 @@ class MainWindow(QMainWindow):
         self.cameras = CamerasScreen(ctx)
         self.form = CameraForm(ctx)
         self.control = ControlScreen(ctx.control, ctx)
-        self.calibration = QLabel("Калібрування камери — етап 3 плану розробки.")
+        self.calibration = CalibrationScreen(ctx)
         for page in (self.cameras, self.form, self.control, self.calibration):
             self.stack.addWidget(page)
 
         self.cameras.edit_requested.connect(self.edit_camera)
-        self.cameras.calibrate_requested.connect(lambda _id: self.stack.setCurrentWidget(self.calibration))
+        self.cameras.calibrate_requested.connect(self.calibrate_camera)
+        self.calibration.closed.connect(self.show_cameras)
         self.cameras.changed.connect(self.control.reload_cameras)
         self.form.closed.connect(self.show_cameras)
         self.form.saved.connect(lambda _id: (self.cameras.refresh(), self.control.reload_cameras()))
@@ -48,6 +50,8 @@ class MainWindow(QMainWindow):
         new = self.stack.currentWidget()
         if self._page is self.form and new is not self.form:
             self.form.leave()
+        if self._page is self.calibration and new is not self.calibration:
+            self.calibration.leave()
         if self._page is self.control and new is not self.control:
             self.control.leave()
         if new is self.control and self._page is not self.control:
@@ -59,6 +63,10 @@ class MainWindow(QMainWindow):
         self.cameras.refresh()
         self.stack.setCurrentWidget(self.cameras)
 
+    def calibrate_camera(self, camera_id) -> None:
+        self.calibration.open_camera(camera_id)
+        self.stack.setCurrentWidget(self.calibration)
+
     def edit_camera(self, camera_id) -> None:
         self.form.open_camera(camera_id)
         self.stack.setCurrentWidget(self.form)
@@ -66,6 +74,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         self.form.leave()
         self.control.leave()
+        self.calibration.leave()
+        self.calibration.timer.stop()
         self.control.timer.stop()
         self.form.timer.stop()
         self.ctx.shutdown()
