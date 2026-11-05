@@ -40,7 +40,7 @@ pump(1.0)
 win.grab().save(os.path.join(out_dir, "cameras.png"))
 
 win.stack.setCurrentWidget(win.control)
-ctx.control.backend.set_online("Камера 3", False)
+ctx.control.backend.sim.set_online("Камера 3", False)
 scr = win.control
 scr.tgt_az.setValue(75.0)
 scr.tgt_el.setValue(25.0)
