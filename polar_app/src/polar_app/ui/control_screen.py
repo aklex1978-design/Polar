@@ -164,7 +164,7 @@ class ControlScreen(QWidget):
         box = QGroupBox("Камери")
         v = QVBoxLayout(box)
         self.camera_list = QListWidget()
-        self.camera_list.setMinimumWidth(240)
+        self.camera_list.setMinimumWidth(250)
         self.camera_list.currentItemChanged.connect(self._on_select)
         v.addWidget(self.camera_list)
         stop_all = QPushButton("Зупинити всі")
@@ -366,7 +366,7 @@ class ControlScreen(QWidget):
                 continue
             color = GOOD if st.link_ok and not st.error_flags else (WARN if st.link_ok else BAD)
             item.setIcon(_dot(color))
-            item.setText(f"{st.name}  —  {st.link_text}")
+            item.setText(f"{st.name} · {st.link_text}")
             item.setToolTip(st.error_text or st.link_text)
             if st.name == self._current:
                 self._show_status(st)
