@@ -35,6 +35,24 @@ jobs:
           name: screenshots
           path: shots/*.png
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Встановлення
+        run: python -m pip install -e "polar_core[test]" -e ros2_ws/src/pantilt_driver -e "polar_app[gui,test]"
+      - name: Тести (без камер на машині CI)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest polar_core
+          python -m pytest polar_app/tests
+      - name: Список USB-камер (на машині CI має бути порожній, без помилок)
+        run: python -c "from polar_core.usb_cameras import list_usb_cameras, windows_camera_names; print(windows_camera_names()); print(list_usb_cameras())"
+
   ros2:
     runs-on: ubuntu-22.04
     container: ros:humble
