@@ -1,4 +1,4 @@
-"""Головне вікно: меню «Камери» (список, редагування, калібрування, управління).
+"""Головне вікно: меню «Камери» (список, управління); редагування і калібрування — зі списку камер.
 Інші меню («Налаштування», «Робота») — на наступних етапах."""
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ class MainWindow(QMainWindow):
         self.stack.currentChanged.connect(self._page_changed)
 
         menu = self.menuBar().addMenu("Камери")
-        for text, slot in (("Список", self.show_cameras), ("Редагування", lambda: self.edit_camera(None)),
-                           ("Калібрування", lambda: self.stack.setCurrentWidget(self.calibration)),
+        # «Редагування» і «Калібрування» відкриваються кнопками в рядку камери (і «Додати») зі списку
+        for text, slot in (("Список", self.show_cameras),
                            ("Управління", lambda: self.stack.setCurrentWidget(self.control))):
             act = QAction(text, self)
             act.triggered.connect(slot)

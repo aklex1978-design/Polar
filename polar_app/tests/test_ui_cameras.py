@@ -256,3 +256,8 @@ def test_streams_follow_screens(win):
     assert v.is_running("Камера 3") and not v.is_running(first)
     win.show_cameras()                                             # вихід з «Управління»
     assert not v.is_running("Камера 3")
+
+
+def test_camera_menu_has_list_and_control_only(win):
+    menu = win.menuBar().actions()[0].menu()
+    assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
