@@ -34,7 +34,10 @@ class WorkScreen(QWidget):
         self.table.setHorizontalHeaderLabels(["Камера", "Стан", "Хід", "Покриття панорами"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh = self.table.horizontalHeader()
+        for c in (0, 1, 3):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         v.addWidget(self.table)
         self.message = QLabel("")
         self.message.setWordWrap(True)
