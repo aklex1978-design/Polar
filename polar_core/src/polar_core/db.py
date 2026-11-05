@@ -1,0 +1,135 @@
+"""База даних SQLite Polar: схема і міграції за PRAGMA user_version."""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Union
+
+# Кожна міграція переводить базу з версії i на i+1. Нові зміни — тільки новими елементами списку.
+MIGRATIONS = [
+    """
+    CREATE TABLE settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE cameras (
+        id                INTEGER PRIMARY KEY,
+        name              TEXT NOT NULL UNIQUE,
+        model             TEXT NOT NULL DEFAULT '',
+        resolution_x      INTEGER NOT NULL,
+        resolution_y      INTEGER NOT NULL,
+        fov_x_deg         REAL NOT NULL,
+        fov_y_deg         REAL NOT NULL,
+        latitude          REAL,
+        longitude         REAL,
+        altitude_m        REAL,
+        north_offset_deg  REAL NOT NULL DEFAULT 0,
+        tilt_deg          REAL NOT NULL DEFAULT 0,       -- нахил камери за год. стрілкою від вертикалі
+        k1 REAL NOT NULL DEFAULT 0, k2 REAL NOT NULL DEFAULT 0,
+        p1 REAL NOT NULL DEFAULT 0, p2 REAL NOT NULL DEFAULT 0,
+        k3 REAL NOT NULL DEFAULT 0,
+        stream_url        TEXT NOT NULL DEFAULT '',
+        stream_latency_ms INTEGER NOT NULL DEFAULT 0,     -- затримка відео відносно кутів датчика
+        ros_namespace     TEXT NOT NULL DEFAULT '',
+        panorama_path     TEXT NOT NULL DEFAULT '',
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE calibration (
+        camera_id   INTEGER PRIMARY KEY REFERENCES cameras(id) ON DELETE CASCADE,
+        center_x    REAL NOT NULL,            -- центр камери, пікселі кадру
+        center_y    REAL NOT NULL,
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE servo_settings (
+        camera_id           INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+        axis                TEXT NOT NULL CHECK (axis IN ('pan', 'tilt')),
+        servo_id            INTEGER NOT NULL CHECK (servo_id BETWEEN 1 AND 253),
+        direction           INTEGER NOT NULL DEFAULT 1 CHECK (direction IN (-1, 1)),
+        zero_offset_deg     REAL NOT NULL DEFAULT 0,
+        max_speed_deg_s     REAL NOT NULL DEFAULT 180,
+        acceleration        INTEGER NOT NULL DEFAULT 50,
+        torque_limit_pct    REAL NOT NULL DEFAULT 100,
+        temperature_limit_c REAL NOT NULL DEFAULT 70,
+        min_deg             REAL,
+        max_deg             REAL,
+        PRIMARY KEY (camera_id, axis)
+    );
+
+    CREATE TABLE detection_mask (
+        id         INTEGER PRIMARY KEY,
+        camera_id  INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('rect', 'el_min', 'el_max')),
+        az_from    REAL, az_to REAL,          -- для rect; az_from > az_to = через 0/360
+        el_from    REAL, el_to REAL,          -- для rect; для el_min/el_max — el_from
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX detection_mask_camera ON detection_mask(camera_id);
+
+    CREATE TABLE map_levels (
+        id         INTEGER PRIMARY KEY,
+        zoom       INTEGER NOT NULL UNIQUE CHECK (zoom BETWEEN 1 AND 8),
+        scale_m_per_px REAL NOT NULL,
+        file_path  TEXT,                       -- GeoTIFF у EPSG:3857
+        loaded_at  TEXT
+    );
+
+    CREATE TABLE targets (
+        id          INTEGER PRIMARY KEY,
+        first_seen  TEXT NOT NULL,
+        last_seen   TEXT NOT NULL,
+        latitude    REAL, longitude REAL, altitude_m REAL,
+        distance_m  REAL,
+        error_m     REAL,                      -- оцінка похибки тріангуляції
+        cameras     INTEGER NOT NULL DEFAULT 1,
+        status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'lost'))
+    );
+
+    CREATE TABLE detections (
+        id          INTEGER PRIMARY KEY,
+        target_id   INTEGER REFERENCES targets(id) ON DELETE SET NULL,
+        camera_id   INTEGER NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
+        ts          TEXT NOT NULL,
+        azimuth_deg REAL NOT NULL,
+        elevation_deg REAL NOT NULL,
+        size_px     REAL,
+        snapshot_path TEXT
+    );
+    CREATE INDEX detections_ts ON detections(ts);
+
+    CREATE TABLE events (
+        id        INTEGER PRIMARY KEY,
+        ts        TEXT NOT NULL DEFAULT (datetime('now')),
+        camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL,
+        kind      TEXT NOT NULL,              -- mode_change, error, servo_offline, ...
+        message   TEXT NOT NULL DEFAULT ''
+    );
+    """,
+]
+
+SCHEMA_VERSION = len(MIGRATIONS)
+
+
+def connect(path: Union[str, Path]) -> sqlite3.Connection:
+    """Відкрити базу і довести схему до поточної версії."""
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    if str(path) != ":memory:":
+        conn.execute("PRAGMA journal_mode = WAL")
+    migrate(conn)
+    return conn
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(f"База має новішу схему ({version}) ніж програма ({SCHEMA_VERSION})")
+    for i in range(version, SCHEMA_VERSION):
+        with conn:
+            conn.executescript(MIGRATIONS[i])
+            conn.execute(f"PRAGMA user_version = {i + 1}")
+    return SCHEMA_VERSION

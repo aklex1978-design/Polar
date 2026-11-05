@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: polar_core
+        run: |
+          python -m pip install -e "polar_core[test]"
+          python -m pytest polar_core
+      - name: pantilt_driver (логіка без ROS)
+        run: python -m pytest ros2_ws/src/pantilt_driver/test
+
+  ros2:
+    runs-on: ubuntu-22.04
+    container: ros:humble
+    steps:
+      - uses: actions/checkout@v4
+      - name: colcon build
+        shell: bash
+        run: |
+          apt-get update && apt-get install -y python3-serial python3-pytest
+          source /opt/ros/humble/setup.bash
+          cd ros2_ws
+          colcon build --event-handlers console_direct+
+      - name: smoke test (імітатор)
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source ros2_ws/install/setup.bash
+          ros2 launch pantilt_driver pantilt.launch.py backend:=sim camera:=ci &
+          sleep 8
+          ros2 topic pub --once /polar/ci/cmd polar_interfaces/msg/PanTiltCommand "{azimuth_deg: 45.0, elevation_deg: 20.0, speed_deg_s: 90.0}"
+          sleep 2
+          timeout 10 ros2 topic echo --once /polar/ci/state > state.txt
+          cat state.txt
+          grep -q "azimuth_deg: 45" state.txt
+          kill %1
