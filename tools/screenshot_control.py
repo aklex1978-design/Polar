@@ -53,6 +53,10 @@ win.edit_camera(ctx.records()[0].id)
 pump(2.5)
 win.grab().save(os.path.join(out_dir, "camera_form.png"))
 
+win.calibrate_camera(ctx.records()[0].id)
+pump(2.0)
+win.grab().save(os.path.join(out_dir, "calibration.png"))
+
 win.edit_camera(None)
 f = win.form
 pump(0.3)

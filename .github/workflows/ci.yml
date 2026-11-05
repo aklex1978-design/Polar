@@ -31,7 +31,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           python tools/screenshot_control.py shots
-          for f in shots/camera_form_new.png; do echo "PNG_BEGIN $f"; base64 -w0 "$f"; echo; echo "PNG_END"; done
+          for f in shots/calibration.png shots/control.png; do echo "PNG_BEGIN $f"; base64 -w0 "$f"; echo; echo "PNG_END"; done
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots

@@ -49,7 +49,10 @@ class SimTarget:
 class SimCamera:
     def __init__(self, scene: np.ndarray, resolution: Tuple[int, int] = (640, 480),
                  fov_deg: Tuple[float, float] = (60.0, 45.0), noise_std: float = 0.0,
-                 seed: Optional[int] = None) -> None:
+                 seed: Optional[int] = None, model=None) -> None:
+        """model — polar_core.projection.CameraModel: тоді кадр малюється з дисторсією, нахилом γ
+        і зсунутим центром цієї моделі (кути — кути датчика, без зміщення від півночі)."""
+        self.model = model
         self.scene = scene
         self.grid = PanoramaGrid(scene.shape[1], scene.shape[0])
         self.width, self.height = resolution
@@ -62,6 +65,9 @@ class SimCamera:
 
     def pixel_directions(self, azimuth_deg: float, elevation_deg: float) -> Tuple[np.ndarray, np.ndarray]:
         """Азимут і кут місця для кожного пікселя кадру (масиви height×width)."""
+        if self.model is not None:
+            u, v = np.meshgrid(np.arange(self.width) + 0.5, np.arange(self.height) + 0.5)
+            return self.model.pixel_to_angles(u, v, azimuth_deg, elevation_deg, north=False)
         u = (np.arange(self.width) + 0.5 - self.width / 2) / self.fx
         v = (self.height / 2 - (np.arange(self.height) + 0.5)) / self.fy
         u, v = np.meshgrid(u, v)

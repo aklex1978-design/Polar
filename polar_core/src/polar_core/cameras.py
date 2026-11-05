@@ -277,3 +277,12 @@ def set_demo(conn: sqlite3.Connection, camera_id: int, servos: Optional[bool] = 
             conn.execute("UPDATE cameras SET demo_servos = ? WHERE id = ?", (int(servos), camera_id))
         if video is not None:
             conn.execute("UPDATE cameras SET demo_video = ? WHERE id = ?", (int(video), camera_id))
+
+
+def set_tilt(conn: sqlite3.Connection, camera_id: int, tilt_deg: float) -> None:
+    """Нахил камери γ з екрана калібрування (те саме поле, що в «Редагуванні»)."""
+    if not -180 <= tilt_deg <= 180:
+        raise ValueError("нахил — −180…180°")
+    with conn:
+        conn.execute("UPDATE cameras SET tilt_deg = ?, updated_at = datetime('now') WHERE id = ?",
+                     (float(tilt_deg), camera_id))
