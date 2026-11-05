@@ -11,7 +11,9 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, 
 from polar_core import cameras as cm
 from polar_core.cameras import CODECS, PROTOCOLS, STREAM_KINDS, TRANSPORTS, CameraRecord
 
-from .common import BAD, GOOD, QUIET, WARN, FutureBridge, frame_pixmap
+from .common import BAD, GOOD, QUIET, WARN, CollapsibleSection, FutureBridge, frame_pixmap
+
+EXPANDED_BY_DEFAULT = ("Загальне",)    # решта блоків згорнута — кнопки форми одразу видно
 
 # (група, поле, підпис, вид, параметри)
 FIELDS = [
@@ -78,6 +80,14 @@ def _parse_opt(text: str, kind: str):
         return "error"
 
 
+def _errors_note(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} помилка"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} помилки"
+    return f"{n} помилок"
+
+
 class CameraForm(QWidget):
     closed = pyqtSignal()              # «Скасувати» або після збереження — назад до списку
     saved = pyqtSignal(int)
@@ -102,13 +112,16 @@ class CameraForm(QWidget):
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         self.form_layout.addWidget(self.title)
         self._build_fields()
-        self.form_layout.addLayout(self._build_buttons())
-        self.message = QLabel("")
-        self.message.setWordWrap(True)
-        self.form_layout.addWidget(self.message)
         self.form_layout.addStretch(1)
         scroll.setWidget(form_host)
-        outer.addWidget(scroll, 3)
+        left = QVBoxLayout()
+        left.addWidget(scroll, 1)
+        # кнопки і повідомлення — під прокручуваною частиною, завжди на виду
+        left.addLayout(self._build_buttons())
+        self.message = QLabel("")
+        self.message.setWordWrap(True)
+        left.addWidget(self.message)
+        outer.addLayout(left, 3)
         outer.addWidget(self._build_video_panel(), 2)
 
         self.timer = QTimer(self)
@@ -118,12 +131,16 @@ class CameraForm(QWidget):
     # --- побудова ----------------------------------------------------------------------
     def _build_fields(self) -> None:
         groups: Dict[str, QFormLayout] = {}
+        self.sections: Dict[str, CollapsibleSection] = {}
+        self._field_group: Dict[str, str] = {}
         for group, attr, label, kind, opt in FIELDS:
+            self._field_group[attr] = group
             if group not in groups:
-                box = QGroupBox(group)
-                groups[group] = QFormLayout(box)
+                sec = CollapsibleSection(group, expanded=group in EXPANDED_BY_DEFAULT)
+                self.sections[group] = sec
+                groups[group] = QFormLayout(sec.body)
                 groups[group].setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-                self.form_layout.addWidget(box)
+                self.form_layout.addWidget(sec)
             w = self._make_widget(kind, opt)
             if attr in HINTS:
                 w.setToolTip(HINTS[attr])
@@ -295,6 +312,9 @@ class CameraForm(QWidget):
         for attr, lab in self.errors.items():
             lab.setText(errs.get(attr, ""))
             lab.setVisible(attr in errs)
+        for group, sec in self.sections.items():
+            n = sum(1 for a in errs if self._field_group.get(a) == group)
+            sec.set_note(_errors_note(n) if n else "", BAD if n else "")
         self.save_btn.setEnabled(not errs)
         self.check_btn.setEnabled("address" not in errs and "protocol" not in errs)
         self.latency_btn.setEnabled(self.rec.id is not None)
@@ -311,8 +331,16 @@ class CameraForm(QWidget):
         self.message.setText(text)
         self.message.setStyleSheet(f"color: {color}" if color else "")
 
+    def expand_errors(self) -> None:
+        """Розгорнути блоки, у яких є помилки (щоб їх було видно біля полів)."""
+        errs = self.validate()
+        for group in {self._field_group.get(a) for a in errs}:
+            if group in self.sections:
+                self.sections[group].set_expanded(True)
+
     def save(self) -> bool:
         if self.validate():
+            self.expand_errors()
             return False
         rec = self.form_record()
         self._release_stream()                 # після збереження потік підключиться з новими параметрами

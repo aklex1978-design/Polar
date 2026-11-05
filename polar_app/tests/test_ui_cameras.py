@@ -261,3 +261,24 @@ def test_streams_follow_screens(win):
 def test_camera_menu_has_list_and_control_only(win):
     menu = win.menuBar().actions()[0].menu()
     assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
+
+
+def test_form_sections_collapse_and_buttons_visible(win):
+    win.cameras.add_btn.click()
+    f = win.form
+    assert set(f.sections) == {"Загальне", "Оптика", "Розміщення", "Відеопотік", "Управління"}
+    assert f.sections["Загальне"].is_expanded()
+    assert not f.sections["Розміщення"].is_expanded() and not f.sections["Відеопотік"].body.isVisible()
+    assert "помил" in f.sections["Розміщення"].header.text()       # помилки видно і в згорнутому блоці
+    # кнопки форми — поза прокручуваною частиною, видимі без прокрутки
+    assert f.save_btn.isVisible() and f.check_btn.isVisible()
+    assert f.save_btn.mapTo(f, f.save_btn.rect().bottomLeft()).y() <= f.height()
+    f.sections["Відеопотік"].header.click()                         # розгорнути натисканням
+    assert f.sections["Відеопотік"].is_expanded() and f.sections["Відеопотік"].body.isVisible()
+    f.sections["Відеопотік"].header.click()                         # згорнути
+    assert not f.sections["Відеопотік"].body.isVisible()
+    f.expand_errors()
+    assert f.sections["Розміщення"].is_expanded()
+    for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
+        f.widgets[k].setText(v)
+    assert f.sections["Розміщення"].header.text() == "Розміщення"
