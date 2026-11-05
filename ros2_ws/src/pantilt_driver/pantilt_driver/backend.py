@@ -37,6 +37,14 @@ class ServoBackend(abc.ABC):
         багатооборотного режиму ST3020 (±7,5 оберту).
         """
 
+    def scan(self, servo_ids) -> list:
+        """ID сервоприводів, що відповіли на PING."""
+        return [sid for sid in servo_ids if self.ping(sid)]
+
+    def set_id(self, old_id: int, new_id: int) -> None:
+        """Змінити ID сервопривода (на шині має бути лише один сервопривід з old_id)."""
+        raise NotImplementedError
+
     def close(self) -> None:  # noqa: B027 — необов'язковий метод
         pass
 
@@ -93,22 +101,39 @@ class SimBackend(ServoBackend):
             moving=moving,
         )
 
+    def _live(self, servo_id: int) -> Optional[_SimServo]:
+        """Сервопривід, що відповідає; команди іншим губляться, як на справжній шині."""
+        s = self.servos.get(servo_id)
+        return s if s is not None and s.online else None
+
     def move(self, servo_id: int, raw_deg: float, speed_deg_s: float, acceleration: int) -> None:
         self._advance()
-        s = self.servos[servo_id]
+        s = self._live(servo_id)
+        if s is None:
+            return
         s.goal_deg = raw_deg
         s.speed_deg_s = speed_deg_s
 
     def stop(self, servo_id: int) -> None:
         self._advance()
-        s = self.servos[servo_id]
-        s.goal_deg = s.raw_deg
+        s = self._live(servo_id)
+        if s is not None:
+            s.goal_deg = s.raw_deg
 
     def set_torque_limit(self, servo_id: int, pct: float) -> None:
-        self.servos[servo_id].torque_pct = pct
+        s = self._live(servo_id)
+        if s is not None:
+            s.torque_pct = pct
 
     def rebase(self, servo_id: int, turns: int) -> None:
         self._advance()
         s = self.servos[servo_id]
         s.raw_deg -= turns * 360.0
         s.goal_deg -= turns * 360.0
+
+    def set_id(self, old_id: int, new_id: int) -> None:
+        if old_id not in self.servos:
+            raise KeyError(f"немає сервопривода з ID {old_id}")
+        if new_id in self.servos:
+            raise ValueError(f"ID {new_id} вже зайнятий")
+        self.servos[new_id] = self.servos.pop(old_id)

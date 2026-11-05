@@ -18,6 +18,8 @@ INST_READ = 0x02
 INST_WRITE = 0x03
 
 # Регістри (TODO: verify для ST3020)
+REG_ID = 5                    # 1 байт, EEPROM
+REG_LOCK = 55                 # 1 байт: 0 — запис в EEPROM дозволено, 1 — заблоковано
 REG_TORQUE_ENABLE = 40       # 1 байт: 0 вимк., 1 увімк.
 REG_ACCELERATION = 41        # 1 байт
 REG_GOAL_POSITION = 42       # 2 байти, кроки; біт 15 — знак (багатооборотний режим)
@@ -170,6 +172,19 @@ class ST3020Bus(ServoBackend):
     def set_torque_limit(self, servo_id: int, pct: float) -> None:
         value = int(round(max(0.0, min(100.0, pct)) * 10))
         self._write(servo_id, REG_TORQUE_LIMIT, bytes([value & 0xFF, value >> 8]))
+
+    def set_id(self, old_id: int, new_id: int) -> None:
+        # TODO: verify — адреси ID (5) і блокування EEPROM (55) взято з протоколу Feetech STS.
+        if not 1 <= new_id <= 253:
+            raise ValueError("ID має бути 1..253")
+        if self.ping(new_id):
+            raise ValueError(f"ID {new_id} вже зайнятий на шині")
+        if not self._write(old_id, REG_LOCK, bytes([0])):
+            raise IOError(f"сервопривід {old_id} не відповідає")
+        self._write(old_id, REG_ID, bytes([new_id]))
+        self._write(new_id, REG_LOCK, bytes([1]))
+        if not self.ping(new_id):
+            raise IOError(f"після зміни сервопривід не відповідає з ID {new_id}")
 
     def rebase(self, servo_id: int, turns: int) -> None:
         # TODO: verify — спосіб скинути лічильник обертів без руху вала залежить від прошивки ST3020

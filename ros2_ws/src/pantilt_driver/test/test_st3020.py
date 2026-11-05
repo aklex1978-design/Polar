@@ -110,3 +110,27 @@ def test_move_writes_goal_block():
 def test_rebase_not_implemented():
     with pytest.raises(NotImplementedError):
         make_bus(lambda pkt: b"").rebase(1, 2)
+
+
+def test_set_id_writes_unlock_id_lock():
+    present = {1}
+
+    def reply(pkt):
+        sid, inst = pkt[2], pkt[4]
+        if sid not in present:
+            return b""
+        if inst == st3020.INST_WRITE and pkt[5] == st3020.REG_ID:
+            present.discard(sid)
+            present.add(pkt[6])
+        return status(sid)
+
+    bus = make_bus(reply)
+    bus.set_id(1, 9)
+    assert present == {9}
+    writes = [(p[2], p[5], p[6]) for p in bus._serial.written if p[4] == st3020.INST_WRITE]
+    assert writes == [(1, st3020.REG_LOCK, 0), (1, st3020.REG_ID, 9), (9, st3020.REG_LOCK, 1)]
+    with pytest.raises(ValueError):
+        bus.set_id(9, 0)
+    present.add(3)
+    with pytest.raises(ValueError):
+        bus.set_id(9, 3)          # зайнятий

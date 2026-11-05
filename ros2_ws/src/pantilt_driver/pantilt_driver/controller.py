@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 
 from .backend import ServoBackend
 from .servo import (
@@ -55,6 +55,32 @@ class PanTiltController:
         for cfg in (pan, tilt):
             backend.set_torque_limit(cfg.servo_id, cfg.torque_limit_pct)
         self.update()
+
+    def reconfigure(self, pan: ServoConfig, tilt: ServoConfig,
+                    link_timeout_s: Optional[float] = None) -> None:
+        """Застосувати нові налаштування сервоприводів без перезапуску."""
+        if pan.servo_id == tilt.servo_id:
+            raise ValueError("Горизонтальний і вертикальний сервоприводи мають мати різні ID")
+        self._halt()
+        self.pan, self.tilt = pan, tilt
+        if link_timeout_s is not None:
+            self.link_timeout_s = link_timeout_s
+        for cfg in (pan, tilt):
+            self.backend.set_torque_limit(cfg.servo_id, cfg.torque_limit_pct)
+        self.update()
+
+    def zero_here(self, axis: str) -> float:
+        """Поточне положення осі стає нулем камери. Повертає нове зміщення нуля (кут вала)."""
+        cfg = {"pan": self.pan, "tilt": self.tilt}.get(axis)
+        if cfg is None:
+            raise ValueError("axis має бути 'pan' або 'tilt'")
+        reading = self.backend.read(cfg.servo_id)
+        if reading is None:
+            raise IOError(f"сервопривід {cfg.servo_id} не відповідає")
+        # Для азимуту — у межах одного оберту: кількість обертів після вимкнення не зберігається.
+        cfg.zero_offset_deg = wrap360(reading.raw_deg) if cfg.continuous else reading.raw_deg
+        self.update()
+        return cfg.zero_offset_deg
 
     # --- команди від сервера ------------------------------------------------
     def heartbeat(self) -> None:

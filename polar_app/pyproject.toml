@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polar-app"
+version = "0.1.0"
+description = "Polar: настільна програма і вузол керування камерами polar_control"
+requires-python = ">=3.10"
+dependencies = ["polar-core"]
+
+[project.optional-dependencies]
+gui = ["PyQt5>=5.15"]
+sim = ["pantilt_driver"]      # імітатор камер без ROS: ros2_ws/src/pantilt_driver
+test = ["pytest>=7"]
+
+[project.scripts]
+polar = "polar_app.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

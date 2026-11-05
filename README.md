@@ -16,8 +16,12 @@
 
 ## Етапи
 
-Код пишеться за етапами з «Плану розробки». Зараз — **етап 0, підготовка**:
-структура репозиторію, інтерфейси ROS 2, імітатор сервоприводів і камери, схема бази даних, автоматичні тести.
+Код пишеться за етапами з «Плану розробки».
+
+- **Етап 0, підготовка:** структура репозиторію, інтерфейси ROS 2, імітатори сервоприводів і камери,
+  схема бази даних, автоматичні тести.
+- **Етап 1, керування камерами:** налаштування сервоприводів через ROS 2, вузол `polar_control`
+  на сервері, екран «Камери / Управління».
 
 ## Швидкий старт
 
@@ -27,6 +31,13 @@
 cd polar_core
 python3 -m pip install -e ".[test]"
 python3 -m pytest
+```
+
+### Екран «Камери / Управління» без обладнання
+
+```bash
+python3 -m pip install -e polar_core -e ros2_ws/src/pantilt_driver -e "polar_app[gui]"
+python3 -m polar_app --sim --demo
 ```
 
 ### Логіка керування сервоприводами (без ROS)
@@ -72,6 +83,10 @@ ros2 service call /polar/camera_1/stop std_srvs/srv/Trigger
 | `state` | `polar_interfaces/msg/PanTiltState` | Pi → сервер |
 | `heartbeat` | `std_msgs/msg/Empty` | Сервер → Pi |
 | `stop` | `std_srvs/srv/Trigger` | Сервер → Pi |
+| `configure` | `polar_interfaces/srv/ConfigureServos` | Сервер → Pi |
+| `scan` | `polar_interfaces/srv/ScanServos` | Сервер → Pi |
+| `set_zero` | `polar_interfaces/srv/SetZero` | Сервер → Pi |
+| `set_servo_id` | `polar_interfaces/srv/SetServoId` | Сервер → Pi |
 
 Якщо Pi довше за тайм-аут не отримує від сервера жодної команди чи сигналу присутності
 (`heartbeat`, `std_msgs/msg/Empty`), він зупиняє сервоприводи.
@@ -80,5 +95,7 @@ ros2 service call /polar/camera_1/stop std_srvs/srv/Trigger
 
 - Адреси регістрів ST3020 у `pantilt_driver/st3020.py` взято з протоколу Feetech STS (позначено `TODO: verify`);
   їх треба звірити з посібником ST3020 і перевірити на сервоприводі.
+- Адреси ID (5) і блокування EEPROM (55) для зміни ID сервопривода.
+- Межі кутів поки діють програмно (на сервері й на Pi), а не записуються в регістри сервопривода.
 - Скидання лічильника обертів азимуту без руху вала (`rebase`) для ST3020 поки не реалізовано:
   до перевірки камера працює в межах ±7,5 оберту від нуля.

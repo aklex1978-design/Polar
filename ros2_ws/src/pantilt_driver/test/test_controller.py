@@ -145,3 +145,43 @@ def test_same_ids_rejected():
     backend = SimBackend([1])
     with pytest.raises(ValueError):
         PanTiltController(backend, ServoConfig(servo_id=1), ServoConfig(servo_id=1))
+
+
+def test_reconfigure_applies_new_limits():
+    ctrl, backend, clock = make()
+    ctrl.reconfigure(ServoConfig(servo_id=1, continuous=True),
+                     ServoConfig(servo_id=2, min_deg=10, max_deg=60), link_timeout_s=5.0)
+    assert ctrl.link_timeout_s == 5.0
+    ctrl.command(0.0, 80.0)
+    st = run(ctrl, clock, 2.0)
+    assert st.elevation_deg == pytest.approx(60.0)
+    with pytest.raises(ValueError):
+        ctrl.reconfigure(ServoConfig(servo_id=1), ServoConfig(servo_id=1))
+
+
+def test_zero_here():
+    ctrl, backend, clock = make()
+    ctrl.command(30.0, 20.0)
+    run(ctrl, clock, 1.0)
+    backend.servos[1].raw_deg = backend.servos[1].goal_deg = 725.0  # третій оберт
+    assert ctrl.zero_here("pan") == pytest.approx(5.0)
+    assert ctrl.zero_here("tilt") == pytest.approx(20.0)
+    st = ctrl.update()
+    assert st.azimuth_deg == pytest.approx(0.0, abs=1e-9)
+    assert st.elevation_deg == pytest.approx(0.0)
+    with pytest.raises(ValueError):
+        ctrl.zero_here("roll")
+    backend.servos[2].online = False
+    with pytest.raises(IOError):
+        ctrl.zero_here("tilt")
+
+
+def test_scan_and_set_id():
+    _, backend, _ = make()
+    assert backend.scan(range(1, 10)) == [1, 2]
+    backend.set_id(2, 7)
+    assert backend.scan(range(1, 10)) == [1, 7]
+    with pytest.raises(ValueError):
+        backend.set_id(1, 7)
+    with pytest.raises(KeyError):
+        backend.set_id(3, 8)

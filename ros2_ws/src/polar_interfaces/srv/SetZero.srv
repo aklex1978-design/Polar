@@ -1,0 +1,6 @@
+# Поточне положення осі стає нулем камери. axis: "pan" або "tilt".
+string axis
+---
+bool success
+string message
+float64 zero_offset_deg

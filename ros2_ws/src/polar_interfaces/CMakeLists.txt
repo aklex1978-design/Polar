@@ -10,6 +10,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PanTiltJog.msg"
   "msg/ServoTelemetry.msg"
   "msg/PanTiltState.msg"
+  "msg/ServoSettings.msg"
+  "srv/ConfigureServos.srv"
+  "srv/ScanServos.srv"
+  "srv/SetZero.srv"
+  "srv/SetServoId.srv"
   DEPENDENCIES std_msgs
 )
 

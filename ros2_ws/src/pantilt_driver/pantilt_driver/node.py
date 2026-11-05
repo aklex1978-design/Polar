@@ -7,7 +7,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import Empty
 from std_srvs.srv import Trigger
 
-from polar_interfaces.msg import PanTiltCommand, PanTiltJog, PanTiltState, ServoTelemetry
+from polar_interfaces.msg import (PanTiltCommand, PanTiltJog, PanTiltState, ServoSettings,
+                                  ServoTelemetry)
+from polar_interfaces.srv import ConfigureServos, ScanServos, SetServoId, SetZero
 
 from .backend import SimBackend
 from .controller import PanTiltController
@@ -35,6 +37,22 @@ def _servo_config(node: Node, prefix: str, defaults: dict) -> ServoConfig:
     )
 
 
+def settings_to_config(msg: ServoSettings) -> ServoConfig:
+    return ServoConfig(
+        servo_id=msg.id,
+        direction=msg.direction,
+        zero_offset_deg=msg.zero_offset_deg,
+        gear_ratio=msg.gear_ratio,
+        max_speed_deg_s=msg.max_speed_deg_s,
+        acceleration=msg.acceleration,
+        torque_limit_pct=msg.torque_limit_pct,
+        temperature_limit_c=msg.temperature_limit_c,
+        min_deg=msg.min_deg if msg.has_limits else None,
+        max_deg=msg.max_deg if msg.has_limits else None,
+        continuous=msg.continuous,
+    )
+
+
 class PanTiltNode(Node):
     def __init__(self) -> None:
         super().__init__("pantilt_driver")
@@ -45,17 +63,10 @@ class PanTiltNode(Node):
         pan = _servo_config(self, "pan", {"id": 1, "continuous": True})
         tilt = _servo_config(self, "tilt", {"id": 2, "min_deg": 0.0, "max_deg": 90.0})
 
-        if backend_name == "sim":
-            backend = SimBackend([pan.servo_id, tilt.servo_id])
-        elif backend_name == "st3020":
-            from .st3020 import ST3020Bus
-
-            port = self.declare_parameter("port", "/dev/serial0").value
-            baud = self.declare_parameter("baudrate", 1_000_000).value
-            backend = ST3020Bus(port, baud)
-        else:
-            raise ValueError(f"Невідомий backend: {backend_name} (sim | st3020)")
-
+        self.backend_name = backend_name
+        self.port = self.declare_parameter("port", "/dev/serial0").value
+        self.baudrate = self.declare_parameter("baudrate", 1_000_000).value
+        backend = self._open_backend(backend_name, [pan.servo_id, tilt.servo_id])
         self.ctrl = PanTiltController(backend, pan, tilt, link_timeout_s=link_timeout_s)
 
         cmd_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -66,10 +77,65 @@ class PanTiltNode(Node):
         self.create_subscription(PanTiltJog, "jog", self._on_jog, cmd_qos)
         self.create_subscription(Empty, "heartbeat", lambda _m: self.ctrl.heartbeat(), cmd_qos)
         self.create_service(Trigger, "stop", self._on_stop)
+        self.create_service(ConfigureServos, "configure", self._on_configure)
+        self.create_service(ScanServos, "scan", self._on_scan)
+        self.create_service(SetZero, "set_zero", self._on_set_zero)
+        self.create_service(SetServoId, "set_servo_id", self._on_set_servo_id)
         self.state_pub = self.create_publisher(PanTiltState, "state", state_qos)
-        self.create_timer(1.0 / rate_hz, self._tick)
+        self.rate_hz = rate_hz
+        self.timer = self.create_timer(1.0 / rate_hz, self._tick)
         self.get_logger().info(
             f"pantilt_driver: backend={backend_name}, pan id={pan.servo_id}, tilt id={tilt.servo_id}")
+
+    def _open_backend(self, name: str, servo_ids):
+        if name == "sim":
+            return SimBackend(servo_ids)
+        if name == "st3020":
+            from .st3020 import ST3020Bus
+
+            return ST3020Bus(self.port, self.baudrate)
+        raise ValueError(f"Невідомий backend: {name} (sim | st3020)")
+
+    def _on_configure(self, req, resp):
+        try:
+            pan, tilt = settings_to_config(req.pan), settings_to_config(req.tilt)
+            if self.backend_name == "st3020" and req.port and (
+                    req.port != self.port or req.baudrate != self.baudrate):
+                self.ctrl.stop()
+                self.ctrl.backend.close()
+                self.port, self.baudrate = req.port, int(req.baudrate)
+                self.ctrl.backend = self._open_backend("st3020", [])
+            self.ctrl.reconfigure(pan, tilt, req.link_timeout_s if req.link_timeout_s > 0 else None)
+            if req.state_rate_hz > 0 and abs(req.state_rate_hz - self.rate_hz) > 1e-9:
+                self.timer.cancel()
+                self.rate_hz = req.state_rate_hz
+                self.timer = self.create_timer(1.0 / self.rate_hz, self._tick)
+            resp.success, resp.message = True, "налаштування застосовано"
+        except (ValueError, OSError) as e:
+            resp.success, resp.message = False, str(e)
+        self.get_logger().info(f"configure: {resp.message}")
+        return resp
+
+    def _on_scan(self, req, resp):
+        first, last = max(1, req.first_id or 1), min(253, req.last_id or 253)
+        resp.ids = self.ctrl.backend.scan(range(first, last + 1))
+        return resp
+
+    def _on_set_zero(self, req, resp):
+        try:
+            resp.zero_offset_deg = self.ctrl.zero_here(req.axis)
+            resp.success, resp.message = True, "нуль встановлено"
+        except (ValueError, OSError) as e:
+            resp.success, resp.message = False, str(e)
+        return resp
+
+    def _on_set_servo_id(self, req, resp):
+        try:
+            self.ctrl.backend.set_id(req.old_id, req.new_id)
+            resp.success, resp.message = True, f"ID {req.old_id} → {req.new_id}"
+        except (ValueError, KeyError, OSError, NotImplementedError) as e:
+            resp.success, resp.message = False, str(e)
+        return resp
 
     def _on_cmd(self, msg: PanTiltCommand) -> None:
         self.ctrl.command(msg.azimuth_deg, msg.elevation_deg, msg.speed_deg_s)
