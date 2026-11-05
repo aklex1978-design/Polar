@@ -1,0 +1,33 @@
+# Параметри pantilt_driver для однієї камери. Значення відповідають налаштуванням
+# сервоприводів у «Камери / Управління» і надсилаються сервером; тут — значення за замовчуванням.
+/**:
+  ros__parameters:
+    backend: st3020            # sim | st3020
+    port: /dev/serial0         # UART на GPIO, до якого під'єднано Bus Servo Driver HAT (A)
+    baudrate: 1000000
+    state_rate_hz: 20.0
+    link_timeout_s: 2.0
+    pan:                        # горизонтальний сервопривід (азимут), ковзний контакт
+      id: 1
+      direction: 1
+      zero_offset_deg: 0.0
+      gear_ratio: 1.0           # редуктора немає
+      max_speed_deg_s: 180.0
+      acceleration: 50
+      torque_limit_pct: 100.0
+      temperature_limit_c: 70.0
+      continuous: true
+      min_deg: -1.0             # -1 = без меж
+      max_deg: -1.0
+    tilt:                       # вертикальний сервопривід (кут місця)
+      id: 2
+      direction: 1
+      zero_offset_deg: 0.0
+      gear_ratio: 1.0
+      max_speed_deg_s: 180.0
+      acceleration: 50
+      torque_limit_pct: 100.0
+      temperature_limit_c: 70.0
+      continuous: false
+      min_deg: 0.0
+      max_deg: 90.0
