@@ -43,7 +43,8 @@ jobs:
       - name: Залежності
         run: |
           apt-get update && apt-get install -y python3-serial python3-pytest python3-pip python3-numpy
-          python3 -m pip install --no-deps ./polar_core ./polar_app
+          python3 -m pip install -U pip
+          python3 -m pip install --no-deps -e polar_core -e polar_app
       - name: colcon build
         shell: bash
         run: |
