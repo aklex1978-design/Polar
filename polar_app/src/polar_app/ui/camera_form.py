@@ -130,7 +130,17 @@ class CameraForm(QWidget):
             lay = QVBoxLayout(cell)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(1)
-            lay.addWidget(w)
+            if attr == "address":
+                row = QHBoxLayout()
+                row.addWidget(w, 1)
+                self.usb_btn = QPushButton("Отримати список камер")
+                self.usb_btn.setToolTip("USB-камери, підключені до сервера; вибір заповнює адресу, "
+                                        "роздільну здатність потоку і кадри/с")
+                self.usb_btn.clicked.connect(self.list_usb_cameras)
+                row.addWidget(self.usb_btn)
+                lay.addLayout(row)
+            else:
+                lay.addWidget(w)
             lay.addWidget(err)
             groups[group].addRow(label, cell)
             self._connect_change(w)
@@ -262,6 +272,7 @@ class CameraForm(QWidget):
         return errs
 
     def _protocol_hint(self) -> None:
+        self.usb_btn.setEnabled(self.widgets["protocol"].currentData() == "USB")
         ph = {"RTSP": "rtsp://192.168.1.10:554/stream1", "ONVIF": "192.168.1.10:80",
               "USB": "0 або /dev/video0", "HTTP": "http://192.168.1.10/video.mjpg"}
         self.widgets["address"].setPlaceholderText(ph.get(self.widgets["protocol"].currentData(), ""))
@@ -314,6 +325,54 @@ class CameraForm(QWidget):
             text = f"Зʼєднання працює: {w}×{h}, {fps:.1f} кадрів/с"
             self._say(text + (f" ({'; '.join(notes)})" if notes else ""), WARN if notes else GOOD)
         self.bridge.watch(self.ctx.video.check_connection(rec), report)
+
+    def list_usb_cameras(self) -> None:
+        self._say("Шукаю USB-камери…")
+        self.usb_btn.setEnabled(False)
+
+        def report(f):
+            self._protocol_hint()
+            try:
+                cams = f.result()
+            except Exception as e:  # noqa: BLE001
+                self._say(f"Список камер не отримано: {e}", BAD)
+                return
+            self._say(f"Знайдено USB-камер: {len(cams)}." if cams else "До сервера не підключено жодної USB-камери.",
+                      "" if cams else WARN)
+            self.open_usb_dialog(cams)
+        self.bridge.watch(self.ctx.video.list_usb_cameras(), report)
+
+    def usb_in_use(self) -> Dict[str, str]:
+        """Адреси USB-камер, вже доданих у Polar (крім цієї) → назва камери."""
+        return {r.address.strip(): r.name for r in self.ctx.records()
+                if r.protocol == "USB" and r.id != self.rec.id}
+
+    def open_usb_dialog(self, cams) -> None:
+        from .usb_dialog import UsbCameraDialog
+
+        self.usb_dialog = UsbCameraDialog(cams, self.usb_in_use(), self)
+        self.usb_dialog.accepted.connect(
+            lambda: self.apply_usb_choice(self.usb_dialog.selected_camera(), self.usb_dialog.selected_mode()))
+        self.usb_dialog.open()
+
+    def apply_usb_choice(self, cam, mode) -> None:
+        if cam is None:
+            return
+        self.widgets["protocol"].setCurrentIndex(self.widgets["protocol"].findData("USB"))
+        self.widgets["address"].setText(cam.address)
+        if not self.widgets["model"].text().strip():
+            self.widgets["model"].setText(cam.name)
+        if mode is not None:
+            self.widgets["stream_res_x"].setText(str(mode.width))
+            self.widgets["stream_res_y"].setText(str(mode.height))
+            if mode.fps:
+                self.widgets["fps"].setValue(mode.fps)
+            if mode.codec:
+                self.widgets["codec"].setCurrentIndex(self.widgets["codec"].findData(mode.codec))
+        used = self.usb_in_use().get(cam.address) or self.usb_in_use().get(cam.device)
+        self._say(f"Вибрано {cam.name} ({cam.address})" + (f" — вже використовується камерою «{used}»" if used else ""),
+                  WARN if used else GOOD)
+        self.validate()
 
     def measure_latency(self) -> None:
         if self.rec.id is None:

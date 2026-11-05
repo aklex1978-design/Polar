@@ -29,7 +29,9 @@ jobs:
       - name: Знімки екранів
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/screenshot_control.py shots
+        run: |
+          python tools/screenshot_control.py shots
+          for f in shots/usb_dialog.png shots/camera_form_usb.png; do echo "PNG_BEGIN $f"; base64 -w0 "$f"; echo; echo "PNG_END"; done
       - uses: actions/upload-artifact@v4
         with:
           name: screenshots

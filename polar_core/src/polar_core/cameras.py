@@ -139,8 +139,8 @@ def address_error(protocol: str, address: str) -> Optional[str]:
         return "rtsp://адреса[:порт]/шлях"
     if protocol == "HTTP" and not re.match(r"https?://[^/\s]+", a, re.I):
         return "http://адреса[:порт]/шлях"
-    if protocol == "USB" and not re.fullmatch(r"\d+|/dev/video\d+", a):
-        return "номер пристрою (0, 1 …) або /dev/videoN"
+    if protocol == "USB" and not re.fullmatch(r"\d+|/dev/video\d+|/dev/v4l/by-(id|path)/\S+", a):
+        return "номер пристрою (0, 1 …), /dev/videoN або /dev/v4l/by-id/…"
     if protocol == "ONVIF" and not re.fullmatch(r"(https?://)?[\w.\-]+(:\d+)?/?", a, re.I):
         return "IP:порт пристрою ONVIF"
     if "@" in a.split("//")[-1].split("/")[0]:

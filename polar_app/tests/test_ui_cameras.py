@@ -134,3 +134,36 @@ def test_measure_latency_button(win):
     assert wait(30, lambda: "Затримка відео" in f.message.text() or "не виміряно" in f.message.text())
     assert "Затримка відео" in f.message.text(), f.message.text()
     assert 100 <= f.widgets["video_latency_ms"].value() <= 220
+
+
+def test_usb_camera_list_fills_form(win):
+    win.cameras.add_btn.click()
+    f = win.form
+    assert not f.usb_btn.isEnabled()                         # для RTSP кнопка неактивна
+    f.widgets["protocol"].setCurrentIndex(f.widgets["protocol"].findData("USB"))
+    assert f.usb_btn.isEnabled()
+    f.usb_btn.click()
+    assert wait(5, lambda: getattr(f, "usb_dialog", None) is not None and f.usb_dialog.isVisible())
+    d = f.usb_dialog
+    assert d.table.rowCount() == 2 and d.table.item(0, 0).text() == "/dev/video0"
+    assert d.mode.count() == 3 and d.selected_mode().width == 1920      # найкращий режим за замовчуванням
+    d.mode.setCurrentIndex(1)                                            # 1280×720, 60 кадрів/с
+    d.accept()
+    wait(0.2)
+    assert f.widgets["address"].text() == "/dev/v4l/by-id/usb-sim_HD_USB_Camera-video-index0"
+    assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("1280", "720")
+    assert f.widgets["fps"].value() == 60.0 and f.widgets["codec"].currentData() == "MJPEG"
+    assert f.widgets["model"].text() == "Імітатор: HD USB Camera"
+    assert "address" not in f.validate()
+    # вже додана камера позначається в списку
+    f.widgets["name"].setText("USB 1")
+    for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
+        f.widgets[k].setText(v)
+    assert f.save()
+    win.cameras.add_btn.click()
+    f.widgets["protocol"].setCurrentIndex(f.widgets["protocol"].findData("USB"))
+    f.usb_btn.click()
+    assert wait(5, lambda: f.usb_dialog.isVisible() and f.usb_dialog.table.rowCount() == 2)
+    assert f.usb_dialog.table.item(0, 2).text() == "USB 1"
+    assert f.usb_dialog.table.currentRow() == 1                           # вибрано вільну камеру
+    f.usb_dialog.reject()

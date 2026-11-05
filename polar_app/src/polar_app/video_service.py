@@ -214,6 +214,29 @@ class VideoService:
         threading.Thread(target=run, name="check-connection", daemon=True).start()
         return out
 
+    # --- «Отримати список камер» (USB) ---------------------------------------------------
+    def list_usb_cameras(self) -> Future:
+        """USB-камери, підключені до сервера. Результат: список polar_core.usb_cameras.UsbCamera."""
+        from polar_core.usb_cameras import UsbCamera, VideoMode, list_usb_cameras
+
+        out: Future = Future()
+        if self.sim:
+            out.set_result([
+                UsbCamera("/dev/video0", "Імітатор: HD USB Camera", "/dev/v4l/by-id/usb-sim_HD_USB_Camera-video-index0",
+                          [VideoMode(1920, 1080, 30.0, "MJPG"), VideoMode(1280, 720, 60.0, "MJPG"),
+                           VideoMode(640, 480, 30.0, "YUYV")]),
+                UsbCamera("/dev/video2", "Імітатор: Thermal Cam", "", [VideoMode(640, 512, 25.0, "YUYV")]),
+            ])
+            return out
+
+        def run():
+            try:
+                out.set_result(list_usb_cameras())
+            except Exception as e:  # noqa: BLE001
+                out.set_exception(e)
+        threading.Thread(target=run, name="usb-list", daemon=True).start()
+        return out
+
     # --- «Виміряти затримку» -------------------------------------------------------------
     def measure_latency(self, name: str, amplitude_deg: float = 25.0, speed_deg_s: float = 50.0,
                         save: bool = True) -> Future:
