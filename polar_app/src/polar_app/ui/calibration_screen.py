@@ -130,12 +130,14 @@ class CameraView(QWidget):
             poly = QPolygonF([self.to_widget(u, v) for u, v in pts])
             p.setPen(QPen(CIRCLE_COLOR, 1.5 if frac == 1.0 else 1))
             p.drawPolyline(poly)
-            top = min(pts, key=lambda q: q[1])
-            lab = self.to_widget(top[0], top[1])
+            # підпис — на правому перетині кола з горизонталлю через центр: він завжди в кадрі
+            # (вгорі великі кола виходять за кадр, бо VFOV < HFOV)
+            lab = self.to_widget(pts[0][0], pts[0][1])
             p.setPen(CIRCLE_COLOR)
             angle = CameraModel.circle_angle(frac, m.hfov_deg)
-            p.drawText(QPointF(lab.x() + 4, lab.y() + 13), f"{int(frac * 100)} %")
-            p.drawText(QPointF(lab.x() + 4, lab.y() + 26), f"{angle:.1f}°")
+            x = min(lab.x() - 46, r.right() - 50)
+            p.drawText(QPointF(x, lab.y() - 18), f"{int(frac * 100)} %")
+            p.drawText(QPointF(x, lab.y() - 5), f"{angle:.1f}°")
         # орієнтири
         p.setPen(QPen(LANDMARK_COLOR, 2))
         for u, v in self.landmarks:
