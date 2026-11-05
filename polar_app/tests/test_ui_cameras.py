@@ -167,3 +167,11 @@ def test_usb_camera_list_fills_form(win):
     assert f.usb_dialog.table.item(0, 2).text() == "USB 1"
     assert f.usb_dialog.table.currentRow() == 1                           # вибрано вільну камеру
     f.usb_dialog.reject()
+
+
+def test_new_camera_form_has_no_stale_frame(win):
+    win.edit_camera(win.ctx.records()[0].id)
+    assert wait(6, lambda: "азимут" in win.form.frame_info.text())
+    win.edit_camera(None)
+    wait(0.5)
+    assert win.form.frame_info.text() == "" and win.form.preview.pixmap().isNull()

@@ -218,6 +218,10 @@ class CameraForm(QWidget):
             ros_namespace=f"camera_{len(self.ctx.records()) + 1}")
         self.title.setText(f"Камери / Редагування · {self.rec.name}" if camera_id else "Камери / Додати камеру")
         self._check_pixmap = None
+        self.preview.clear()
+        self.preview.setText("Немає кадру")
+        self.frame_info.clear()
+        self.stream_info.clear()
         self.message.clear()
         self._loading = True
         for _g, attr, _l, kind, _o in FIELDS:
@@ -422,7 +426,9 @@ class CameraForm(QWidget):
                 self.frame_info.setStyleSheet(f"color: {BAD}")
         st = self.ctx.video.stats(name) if name else None
         if st is None:
-            self.stream_info.setText("Потік не запущено — збережіть камеру" if not name else "")
+            self.stream_info.setText("Потік запуститься після збереження камери; "
+                                     "кадр можна побачити кнопкою «Перевірити зʼєднання»" if not name else "")
+            self.stream_info.setStyleSheet(f"color: {QUIET}")
             return
         if not st.connected:
             self.stream_info.setText(f"Потік: немає ({st.last_error or 'підключення…'}), спроб: {st.reconnects}")
