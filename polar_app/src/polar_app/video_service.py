@@ -102,6 +102,7 @@ class VideoService:
         self._clock = clock
         self._histories: Dict[str, AngleHistory] = {}
         self._pipes: Dict[str, _Pipeline] = {}
+        self._users: Dict[str, int] = {}
         self._lock = threading.Lock()
         control.backend.add_state_listener(self._on_state)
 
@@ -121,21 +122,64 @@ class VideoService:
         with self._db_lock:
             return cm.list_cameras(self.conn)
 
+    # Потік камери відкривається, лише коли його показує якийсь екран (acquire), і закривається,
+    # коли жоден екран його не показує (release): пристрій звільняється, мережа не завантажується.
+    def acquire(self, name: str) -> bool:
+        """Екран показує камеру: підключитися до її потоку (якщо ще не підключено)."""
+        with self._lock:
+            self._users[name] = self._users.get(name, 0) + 1
+            running = name in self._pipes
+        if not running:
+            rec = next((r for r in self.records() if r.name == name), None)
+            if rec is None:
+                self.release(name)
+                return False
+            self._start_pipe(rec)
+        return True
+
+    def release(self, name: str) -> None:
+        """Екран більше не показує камеру; останній — відключає потік."""
+        with self._lock:
+            n = self._users.get(name, 0) - 1
+            if n > 0:
+                self._users[name] = n
+                return
+            self._users.pop(name, None)
+        self.stop_camera(name)
+
+    def users(self, name: str) -> int:
+        return self._users.get(name, 0)
+
     def start(self) -> None:
-        """(Пере)запустити потоки всіх камер з бази."""
+        """Підключити потоки всіх камер з бази (для режимів, яким потрібні всі камери одночасно)."""
         recs = {r.name: r for r in self.records()}
         for name in list(self._pipes):
             if name not in recs:
-                self._pipes.pop(name).stop()
-        for name, rec in recs.items():
-            self.restart(rec)
+                self.stop_camera(name)
+        for rec in recs.values():
+            self._start_pipe(rec)
 
-    def restart(self, rec: CameraRecord) -> None:
+    def _start_pipe(self, rec: CameraRecord) -> None:
         old = self._pipes.pop(rec.name, None)
         if old:
             old.stop()
         self._pipes[rec.name] = _Pipeline(rec, self._make_source(rec), self.history(rec.name),
                                           self._clock).start()
+
+    def restart(self, rec: CameraRecord, old_name: Optional[str] = None) -> None:
+        """Параметри камери змінено: перепідключити потік, якщо його зараз показують."""
+        old_name = old_name or rec.name
+        running = old_name in self._pipes
+        if old_name != rec.name:
+            self.stop_camera(old_name)
+            with self._lock:
+                if old_name in self._users:
+                    self._users[rec.name] = self._users.pop(old_name)
+        if running:
+            self._start_pipe(rec)
+
+    def is_running(self, name: str) -> bool:
+        return name in self._pipes
 
     def stop_camera(self, name: str) -> None:
         p = self._pipes.pop(name, None)

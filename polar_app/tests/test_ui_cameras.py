@@ -236,3 +236,23 @@ def test_check_connection_fills_resolution(win):
     assert wait(15, lambda: "Зʼєднання працює" in f.message.text()), f.message.text()
     assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("640", "360")
     assert not f.errors["stream_res_x"].isVisible()
+
+
+def test_streams_follow_screens(win):
+    v = win.ctx.video
+    assert not any(v.is_running(n) for n in ("Камера 1", "Камера 2", "Камера 3"))   # список камер — без відео
+    rec = win.ctx.records()[0]
+    win.edit_camera(rec.id)
+    assert v.is_running(rec.name)
+    win.form.cancel_btn.click()                                    # вихід з «Редагування»
+    assert not v.is_running(rec.name)
+    win.stack.setCurrentWidget(win.control)                        # вхід в «Управління»
+    c = win.control
+    assert v.is_running(c._current)
+    assert wait(6, lambda: not c.preview.pixmap().isNull()), c.video_info.text()
+    assert wait(3, lambda: "кадрів/с" in c.video_info.text()), c.video_info.text()
+    first = c._current
+    c.select_camera("Камера 3")                                    # інша камера — інший потік
+    assert v.is_running("Камера 3") and not v.is_running(first)
+    win.show_cameras()                                             # вихід з «Управління»
+    assert not v.is_running("Камера 3")

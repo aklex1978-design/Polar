@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
 from polar_core.control import (BAUDRATES, AXES, CameraControlConfig, CameraStatus, ManualControlLocked,
                                 ServoSettings, ServoTelemetry)
 
-GOOD, BAD, WARN = "#2e7d32", "#c62828", "#ef6c00"
+from .common import BAD, GOOD, WARN, frame_pixmap
 AXIS_TITLE = {"pan": "Горизонтальний (азимут)", "tilt": "Вертикальний (кут місця)"}
 
 
@@ -141,6 +141,8 @@ class ControlScreen(QWidget):
         self._bridge.done.connect(lambda fn, f: fn(f))
         self._current: Optional[str] = None
         self._items: Dict[str, QListWidgetItem] = {}
+        self._active = False                  # екран показано — потік вибраної камери підключено
+        self._streaming: Optional[str] = None
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._build_list())
@@ -191,6 +193,18 @@ class ControlScreen(QWidget):
         demo.addWidget(self.demo_video)
         demo.addStretch(1)
         v.addLayout(demo)
+
+        video = QGroupBox("Відео")
+        vv = QVBoxLayout(video)
+        self.preview = QLabel("Немає кадру")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumSize(480, 270)
+        self.preview.setStyleSheet("background: #202020; color: #bbbbbb")
+        vv.addWidget(self.preview)
+        self.video_info = QLabel("")
+        self.video_info.setWordWrap(True)
+        vv.addWidget(self.video_info)
+        v.addWidget(video)
 
         # поточні кути
         cur = QGroupBox("Поточні кути (від датчика)")
@@ -357,8 +371,58 @@ class ControlScreen(QWidget):
     def select_camera(self, name: str) -> None:
         self.camera_list.setCurrentItem(self._items[name])
 
+    # --- відеопотік ----------------------------------------------------------------
+    def enter(self) -> None:
+        """Вхід в «Управління»: підключити й показати потік вибраної камери."""
+        self._active = True
+        self._sync_stream()
+        self.refresh()
+
+    def leave(self) -> None:
+        self._active = False
+        self._sync_stream()
+
+    def _sync_stream(self) -> None:
+        video = getattr(self.ctx, "video", None)
+        if video is None:
+            return
+        want = self._current if self._active else None
+        if want == self._streaming:
+            return
+        if self._streaming:
+            video.release(self._streaming)
+            self._streaming = None
+        self.preview.clear()
+        self.preview.setText("Немає кадру")
+        self.video_info.clear()
+        if want and video.acquire(want):
+            self._streaming = want
+
+    def _show_video(self) -> None:
+        video = getattr(self.ctx, "video", None)
+        if video is None or not self._streaming:
+            return
+        sf = video.latest(self._streaming)
+        st = video.stats(self._streaming)
+        if sf is not None:
+            pix = frame_pixmap(sf.image)
+            self.preview.setPixmap(pix.scaled(self.preview.width(), self.preview.height(),
+                                              Qt.AspectRatioMode.KeepAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation))
+        if st is not None and not st.connected:
+            self.video_info.setText(f"Потік: немає ({st.last_error or 'підключення…'})")
+            self.video_info.setStyleSheet(f"color: {BAD}")
+        elif sf is not None and st is not None:
+            size = f"{st.frame_size[0]}×{st.frame_size[1]}" if st.frame_size else "…"
+            ang = ("без кутів (немає звʼязку з сервоприводами)" if not sf.has_angles else
+                   f"кадр знято при азимуті {(sf.angles.azimuth_deg + self.service.config(self._streaming).north_offset_deg) % 360:.1f}°, "
+                   f"куті місця {sf.angles.elevation_deg:.1f}°")
+            self.video_info.setText(f"{size}, {st.fps:.1f} кадрів/с · {ang}")
+            self.video_info.setStyleSheet("" if sf.has_angles else f"color: {WARN}")
+
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
         self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
+        self._sync_stream()
         self.title.setText(f"Камери / Управління · {self._current}" if self._current else "Камери / Управління")
         self.message.clear()
         self._load_form()
@@ -415,6 +479,7 @@ class ControlScreen(QWidget):
             item.setToolTip(st.error_text or st.link_text)
             if st.name == self._current:
                 self._show_status(st)
+        self._show_video()
 
     def _show_status(self, st: CameraStatus) -> None:
         self.cur_az.setText(f"Азимут: {_fmt(st.azimuth_deg)}")

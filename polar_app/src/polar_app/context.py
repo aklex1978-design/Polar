@@ -35,11 +35,9 @@ class AppContext:
             old_name = self.camera(rec.id).name
         with self.control._db_lock:
             cid, stale = cm.save_camera(self.conn, rec, self.box)
-        if old_name and old_name != rec.name:
-            self.video.stop_camera(old_name)
         self.control.reload()
         self.control.start()
-        self.video.restart(self.camera(cid))
+        self.video.restart(self.camera(cid), old_name=old_name)
         return cid, stale
 
     def set_demo(self, camera_id: int, servos=None, video=None) -> None:

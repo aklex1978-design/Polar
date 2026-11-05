@@ -31,6 +31,7 @@ def env(tmp_path):
     ctl = ControlService(conn, backend)
     ctl.start()
     vs = fakes.bind(VideoService(ctl, SecretBox.for_database(path), **fakes.video_options()))
+    vs.start()
     yield ctl, vs, backend, conn
     vs.shutdown()
     ctl.shutdown()
@@ -136,3 +137,27 @@ def test_demo_video_needs_no_stream(env):
     assert wait(5, lambda: vs.stats(rec.name).frames > 5)
     assert opened == [] and vs.latest(rec.name).has_angles
     vs._open_factory = real_factory
+
+
+def test_acquire_release_opens_stream_on_demand(tmp_path):
+    path = tmp_path / "p.sqlite"
+    conn = db.connect(path, check_same_thread=False)
+    seed_demo(conn)
+    ctl = ControlService(conn, SimControlBackend())
+    ctl.start()
+    vs = fakes.bind(VideoService(ctl, SecretBox.for_database(path), **fakes.video_options()))
+    try:
+        assert not vs.is_running("Камера 1")                 # без екрана потік не підключається
+        assert vs.acquire("Камера 1") and vs.acquire("Камера 1")
+        assert vs.is_running("Камера 1") and vs.users("Камера 1") == 2
+        vs.release("Камера 1")
+        assert vs.is_running("Камера 1")                     # ще показує інший екран
+        vs.release("Камера 1")
+        assert not vs.is_running("Камера 1") and vs.users("Камера 1") == 0
+        assert not vs.acquire("Немає такої") and vs.users("Немає такої") == 0
+        rec = cm.list_cameras(conn)[1]
+        vs.restart(rec)                                      # змінено параметри — не показують, не підключаємо
+        assert not vs.is_running(rec.name)
+    finally:
+        vs.shutdown()
+        ctl.shutdown()

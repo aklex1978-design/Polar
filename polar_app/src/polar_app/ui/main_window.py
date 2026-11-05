@@ -30,8 +30,8 @@ class MainWindow(QMainWindow):
         self.cameras.changed.connect(self.control.reload_cameras)
         self.form.closed.connect(self.show_cameras)
         self.form.saved.connect(lambda _id: (self.cameras.refresh(), self.control.reload_cameras()))
-        self.stack.currentChanged.connect(lambda _i: self.control._load_form()
-                                          if self.stack.currentWidget() is self.control else None)
+        self._page = None
+        self.stack.currentChanged.connect(self._page_changed)
 
         menu = self.menuBar().addMenu("Камери")
         for text, slot in (("Список", self.show_cameras), ("Редагування", lambda: self.edit_camera(None)),
@@ -43,6 +43,18 @@ class MainWindow(QMainWindow):
         self.show_cameras()
         self.resize(1180, 860)
 
+    def _page_changed(self, _index: int) -> None:
+        """Відеопотік показують лише «Редагування» і «Управління»: при виході — відключитися."""
+        new = self.stack.currentWidget()
+        if self._page is self.form and new is not self.form:
+            self.form.leave()
+        if self._page is self.control and new is not self.control:
+            self.control.leave()
+        if new is self.control and self._page is not self.control:
+            self.control._load_form()
+            self.control.enter()
+        self._page = new
+
     def show_cameras(self) -> None:
         self.cameras.refresh()
         self.stack.setCurrentWidget(self.cameras)
@@ -52,6 +64,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.form)
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self.form.leave()
+        self.control.leave()
         self.control.timer.stop()
         self.form.timer.stop()
         self.ctx.shutdown()

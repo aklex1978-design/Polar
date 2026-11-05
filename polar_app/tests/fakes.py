@@ -44,5 +44,4 @@ def video_options():
 def bind(ctx_or_vs):
     vs = getattr(ctx_or_vs, "video", ctx_or_vs)
     vs._open_factory.vs = vs
-    vs.start()                 # перезапуск потоків уже з привʼязкою до історії кутів
     return ctx_or_vs

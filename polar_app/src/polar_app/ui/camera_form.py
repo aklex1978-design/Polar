@@ -86,6 +86,7 @@ class CameraForm(QWidget):
         super().__init__(parent)
         self.ctx = app_ctx
         self.rec = CameraRecord()
+        self._streaming: Optional[str] = None      # камера, потік якої форма тримає підключеним
         self.bridge = FutureBridge()
         self.widgets: Dict[str, QWidget] = {}
         self.errors: Dict[str, QLabel] = {}
@@ -220,9 +221,21 @@ class CameraForm(QWidget):
         return box
 
     # --- дані форми --------------------------------------------------------------------
+    def _release_stream(self) -> None:
+        if self._streaming:
+            self.ctx.video.release(self._streaming)
+            self._streaming = None
+
+    def leave(self) -> None:
+        """Вихід з «Редагування»: відключитися від відеопотоку."""
+        self._release_stream()
+
     def open_camera(self, camera_id: Optional[int]) -> None:
+        self._release_stream()
         self.rec = self.ctx.camera(camera_id) if camera_id is not None else CameraRecord(
             ros_namespace=f"camera_{len(self.ctx.records()) + 1}")
+        if camera_id is not None and self.ctx.video.acquire(self.rec.name):
+            self._streaming = self.rec.name
         self.title.setText(f"Камери / Редагування · {self.rec.name}" if camera_id else "Камери / Додати камеру")
         self._check_pixmap = None
         self.preview.clear()
@@ -302,6 +315,7 @@ class CameraForm(QWidget):
         if self.validate():
             return False
         rec = self.form_record()
+        self._release_stream()                 # після збереження потік підключиться з новими параметрами
         try:
             cid, stale = self.ctx.save_camera(rec)
         except ValueError as e:

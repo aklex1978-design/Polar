@@ -26,7 +26,7 @@ def build_context(db_path: str, video_options: dict = None, ros_factory=None):
     control = ControlService(conn, backend)
     control.start()
     video = VideoService(control, SecretBox.for_database(db_path), **(video_options or {}))
-    video.start()
+    # потоки підключаються, коли їх показує екран («Редагування», «Управління»)
     return AppContext(conn, video.box, control, video)
 
 
