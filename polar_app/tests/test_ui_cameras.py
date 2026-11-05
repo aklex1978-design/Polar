@@ -143,7 +143,7 @@ def test_measure_latency_button(win):
     f.latency_btn.click()
     assert wait(30, lambda: "Затримка відео" in f.message.text() or "не виміряно" in f.message.text())
     assert "Затримка відео" in f.message.text(), f.message.text()
-    assert 100 <= f.widgets["video_latency_ms"].value() <= 220
+    assert 120 <= f.widgets["video_latency_ms"].value() <= 250   # 150 мс потоку + час доставки кадру
 
 
 def test_usb_camera_list_fills_form(win):
