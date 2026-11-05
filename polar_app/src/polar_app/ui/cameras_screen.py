@@ -48,6 +48,8 @@ class CamerasScreen(QWidget):
 
     def refresh(self) -> None:
         recs = self.ctx.video.records()
+        self.table.clearContents()           # прибирає й кнопки попереднього заповнення
+        self.table.setRowCount(0)
         self.table.setRowCount(len(recs))
         for r, rec in enumerate(recs):
             name = QTableWidgetItem(rec.name)
