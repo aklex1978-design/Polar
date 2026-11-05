@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QDoubleSpinBox, QGroupBox, QHBoxLayout, QLabel, QPu
                              QVBoxLayout, QWidget)
 
 from polar_core import calibration as cal
+from polar_core import cameras as cm
 from polar_core.angles import wrap360
 from polar_core.control import ManualControlLocked
 from polar_core.projection import CameraModel, split_wrapped
@@ -276,6 +277,20 @@ class CalibrationScreen(QWidget):
         self.step.setSuffix("°")
         row.addWidget(self.step)
         row.addStretch(1)
+        row.addWidget(QLabel("Нахил γ:"))
+        self.tilt = QDoubleSpinBox()
+        self.tilt.setRange(-180.0, 180.0)
+        self.tilt.setDecimals(2)
+        self.tilt.setSingleStep(0.1)
+        self.tilt.setSuffix("°")
+        self.tilt.setToolTip("Нахил камери відносно вертикалі, за годинниковою стрілкою — додатний. "
+                             "Вісь нахилу на зображенні змінюється одразу; вертикальні обʼєкти мають іти паралельно їй.")
+        self.tilt.valueChanged.connect(self._on_tilt)
+        row.addWidget(self.tilt)
+        self.save_tilt_btn = QPushButton("Зберегти нахил")
+        self.save_tilt_btn.clicked.connect(self.save_tilt)
+        row.addWidget(self.save_tilt_btn)
+        row.addSpacing(12)
         row.addWidget(self.save_center_btn)
         row.addWidget(self.reset_center_btn)
         row.addWidget(self.close_btn)
@@ -319,6 +334,10 @@ class CalibrationScreen(QWidget):
             self.calib = cal.load(self.ctx.conn, camera_id)
             self.criterion = cal.accuracy_criterion(self.ctx.conn)
         self.title.setText(f"Камери / Калібрування · {self.rec.name}")
+        self._loading_tilt = True
+        self.tilt.setValue(self.rec.tilt_deg)
+        self._loading_tilt = False
+        self._tilt_value = self.rec.tilt_deg
         self._img_size = None
         self._center_img = None
         self.view.pixmap = None
@@ -327,6 +346,7 @@ class CalibrationScreen(QWidget):
         self.landmark_btn.setChecked(False)
         self._say("Перетягніть червоне перехрестя в точку зображення, що відповідає кутам датчика.")
         self._show_error()
+        self.save_tilt_btn.setEnabled(False)
         if self.ctx.video.acquire(self.rec.name):
             self._streaming = self.rec.name
         self.refresh()
@@ -343,6 +363,7 @@ class CalibrationScreen(QWidget):
     def model(self) -> CameraModel:
         size = self._size()
         m = CameraModel.from_record(self.rec, frame_size=size)
+        m.tilt_deg = getattr(self, "_tilt_value", self.rec.tilt_deg)     # значення з поля, ще не збережене
         if self._center_img is None:
             c = self.calib.center_for(size) if self.calib else None
             self._center_img = c or (size[0] / 2, size[1] / 2)
@@ -367,7 +388,7 @@ class CalibrationScreen(QWidget):
         self.view.model = m
         st = self.ctx.control.status(self.rec.name)
         lines = [f"Центр камери: X {m.cx:.0f}, Y {m.cy:.0f} px",
-                 f"Нахил γ: {self.rec.tilt_deg:+.2f}°"]
+                 f"Нахил γ: {m.tilt_deg:+.2f}°" + ("" if m.tilt_deg == self.rec.tilt_deg else " (не збережено)")]
         sensor = el = None
         if sf is not None and sf.has_angles:
             sensor, el = sf.angles.azimuth_deg, sf.angles.elevation_deg
@@ -412,6 +433,25 @@ class CalibrationScreen(QWidget):
         size = self._size()
         self._on_center_moved(size[0] / 2, size[1] / 2)
         self._say("Центр повернуто на середину кадру; натисніть «Зберегти центр», щоб записати.")
+
+    # --- нахил ------------------------------------------------------------------------------------
+    def _on_tilt(self, value: float) -> None:
+        if getattr(self, "_loading_tilt", False) or self.rec is None:
+            return
+        self._tilt_value = value
+        self.save_tilt_btn.setEnabled(value != self.rec.tilt_deg)
+        if self.check.observations:              # позначки орієнтира зроблено з іншим нахилом
+            self.clear_landmarks()
+        self.refresh()
+
+    def save_tilt(self) -> None:
+        value = self.tilt.value()
+        with self.ctx.control._db_lock:
+            cm.set_tilt(self.ctx.conn, self.rec.id, value)
+        self.rec = self.ctx.camera(self.rec.id)
+        self.save_tilt_btn.setEnabled(False)
+        self._say(f"Нахил γ = {value:+.2f}° збережено (те саме поле, що в «Редагуванні»).", GOOD)
+        self.refresh()
 
     # --- орієнтир -----------------------------------------------------------------------------
     def _toggle_landmarks(self, on: bool) -> None:

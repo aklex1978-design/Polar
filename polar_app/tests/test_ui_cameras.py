@@ -326,3 +326,19 @@ def test_calibration_screen(win):
     assert cal.load(win.ctx.conn, rec.id).placement_error_deg == pytest.approx(c.check.error())
     c.close_btn.click()
     assert win.stack.currentWidget() is win.cameras and not win.ctx.video.is_running(rec.name)
+
+
+def test_calibration_tilt_field(win):
+    rec = win.ctx.records()[1]
+    win.calibrate_camera(rec.id)
+    c = win.calibration
+    assert c.tilt.value() == rec.tilt_deg and not c.save_tilt_btn.isEnabled()
+    c.tilt.setValue(4.25)
+    assert c.model().tilt_deg == 4.25 and c.save_tilt_btn.isEnabled()
+    assert wait(2, lambda: any("(не збережено)" in line for line in c.view.text_lines))
+    assert win.ctx.camera(rec.id).tilt_deg == rec.tilt_deg              # ще не записано
+    c.save_tilt_btn.click()
+    assert win.ctx.camera(rec.id).tilt_deg == 4.25 and not c.save_tilt_btn.isEnabled()
+    assert "збережено" in c.message.text()
+    win.edit_camera(rec.id)
+    assert win.form.widgets["tilt_deg"].value() == 4.25                 # те саме поле, що в «Редагуванні»

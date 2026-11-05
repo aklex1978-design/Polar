@@ -52,3 +52,12 @@ def test_landmark_check():
     assert lc.error() == pytest.approx(0.4, abs=0.02)
     lc.clear()
     assert lc.observations == []
+
+
+def test_set_tilt(env):
+    conn, rec = env
+    cm.set_tilt(conn, rec.id, -3.5)
+    assert cm.get_camera(conn, rec.id).tilt_deg == -3.5
+    assert cal.model_for(conn, cm.get_camera(conn, rec.id)).tilt_deg == -3.5
+    with pytest.raises(ValueError):
+        cm.set_tilt(conn, rec.id, 200)
