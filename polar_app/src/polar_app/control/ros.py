@@ -53,8 +53,10 @@ def telemetry_from_msg(t) -> ServoTelemetry:
 
 
 class _CameraLink:
-    def __init__(self, node: Node, ns: str) -> None:
+    def __init__(self, node: Node, ns: str, name: str, emit) -> None:
         self.ns = ns
+        self.name = name
+        self._emit = emit
         self.cmd = node.create_publisher(PanTiltCommand, f"{ns}/cmd", CMD_QOS)
         self.jog = node.create_publisher(PanTiltJog, f"{ns}/jog", CMD_QOS)
         self.heartbeat = node.create_publisher(Empty, f"{ns}/heartbeat", CMD_QOS)
@@ -73,6 +75,7 @@ class _CameraLink:
             received_at=time.monotonic(), azimuth_deg=msg.azimuth_deg, elevation_deg=msg.elevation_deg,
             moving=msg.moving, error_flags=msg.error_flags,
             pan=telemetry_from_msg(msg.pan), tilt=telemetry_from_msg(msg.tilt))
+        self._emit(self.name, self.snapshot)
 
     def destroy(self, node: Node) -> None:
         for p in self._entities:
@@ -108,7 +111,7 @@ class RosControlBackend(ControlBackend):
                     self._links.pop(name).destroy(self._node)
             for name, ns in wanted.items():
                 if name not in self._links:
-                    self._links[name] = _CameraLink(self._node, ns)
+                    self._links[name] = _CameraLink(self._node, ns, name, self._emit)
             if self._hb_timer is not None:
                 self._node.destroy_timer(self._hb_timer)
             # сигнал присутності — у 4 рази частіше за тайм-аут, щоб одна втрата не зупиняла камери

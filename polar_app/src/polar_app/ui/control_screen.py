@@ -5,9 +5,9 @@ import copy
 from concurrent.futures import Future
 from typing import Callable, Dict, Optional
 
-from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
                              QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                              QListWidget, QListWidgetItem, QMenu, QPushButton, QScrollArea,
                              QSpinBox, QSplitter, QVBoxLayout, QWidget)
@@ -15,17 +15,17 @@ from PyQt5.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
 from polar_core.control import (BAUDRATES, AXES, CameraControlConfig, CameraStatus, ManualControlLocked,
                                 ServoSettings, ServoTelemetry)
 
-GOOD, BAD, WARN = "#2e7d32", "#c62828", "#ef6c00"
+from .common import BAD, GOOD, WARN, frame_pixmap
 AXIS_TITLE = {"pan": "Горизонтальний (азимут)", "tilt": "Вертикальний (кут місця)"}
 
 
 def _dot(color: str) -> QIcon:
     pm = QPixmap(14, 14)
-    pm.fill(Qt.transparent)
+    pm.fill(Qt.GlobalColor.transparent)
     p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setBrush(QColor(color))
-    p.setPen(Qt.NoPen)
+    p.setPen(Qt.PenStyle.NoPen)
     p.drawEllipse(2, 2, 10, 10)
     p.end()
     return QIcon(pm)
@@ -133,19 +133,22 @@ class ControlScreen(QWidget):
 
     REFRESH_MS = 100
 
-    def __init__(self, service, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, service, ctx=None, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.service = service
+        self.ctx = ctx
         self._bridge = _Bridge()
         self._bridge.done.connect(lambda fn, f: fn(f))
         self._current: Optional[str] = None
         self._items: Dict[str, QListWidgetItem] = {}
+        self._active = False                  # екран показано — потік вибраної камери підключено
+        self._streaming: Optional[str] = None
 
-        splitter = QSplitter(Qt.Horizontal, self)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._build_list())
         right = QScrollArea()
         right.setWidgetResizable(True)
-        right.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         right.setWidget(self._build_details())
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
@@ -179,6 +182,29 @@ class ControlScreen(QWidget):
         self.title = QLabel("Камери / Управління")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(self.title)
+        demo = QHBoxLayout()
+        self.demo_servos = QCheckBox("Демо сервоприводів")
+        self.demo_servos.setToolTip("Імітатор замість Raspberry Pi і ROS 2 — лише для цієї камери")
+        self.demo_video = QCheckBox("Демо відео")
+        self.demo_video.setToolTip("Синтетична сцена замість відеопотоку — лише для цієї камери")
+        self.demo_servos.toggled.connect(lambda on: self._on_demo(servos=on))
+        self.demo_video.toggled.connect(lambda on: self._on_demo(video=on))
+        demo.addWidget(self.demo_servos)
+        demo.addWidget(self.demo_video)
+        demo.addStretch(1)
+        v.addLayout(demo)
+
+        video = QGroupBox("Відео")
+        vv = QVBoxLayout(video)
+        self.preview = QLabel("Немає кадру")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumSize(480, 270)
+        self.preview.setStyleSheet("background: #202020; color: #bbbbbb")
+        vv.addWidget(self.preview)
+        self.video_info = QLabel("")
+        self.video_info.setWordWrap(True)
+        vv.addWidget(self.video_info)
+        v.addWidget(video)
 
         # поточні кути
         cur = QGroupBox("Поточні кути (від датчика)")
@@ -309,9 +335,8 @@ class ControlScreen(QWidget):
         btns = QHBoxLayout()
         self.zero_btn = QPushButton("Встановити нуль")
         menu = QMenu(self.zero_btn)
-        menu.addAction("Обидві осі", lambda: self._on_zero(AXES))
-        menu.addAction(AXIS_TITLE["pan"], lambda: self._on_zero(("pan",)))
-        menu.addAction(AXIS_TITLE["tilt"], lambda: self._on_zero(("tilt",)))
+        for text, axes in (("Обидві осі", AXES), (AXIS_TITLE["pan"], ("pan",)), (AXIS_TITLE["tilt"], ("tilt",))):
+            menu.addAction(text).triggered.connect(lambda _=False, a=axes: self._on_zero(a))
         self.zero_btn.setMenu(menu)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.clicked.connect(self._on_save)
@@ -330,25 +355,108 @@ class ControlScreen(QWidget):
         self._items.clear()
         for name in self.service.camera_names():
             item = QListWidgetItem(_dot(BAD), name)
-            item.setData(Qt.UserRole, name)
+            item.setData(Qt.ItemDataRole.UserRole, name)
             self.camera_list.addItem(item)
             self._items[name] = item
         if self.camera_list.count():
             self.camera_list.setCurrentRow(0)
 
+    def reload_cameras(self) -> None:
+        """Список камер змінився (додано, перейменовано, видалено)."""
+        current = self._current
+        self._fill_list()
+        if current in self._items:
+            self.select_camera(current)
+
     def select_camera(self, name: str) -> None:
         self.camera_list.setCurrentItem(self._items[name])
 
+    # --- відеопотік ----------------------------------------------------------------
+    def enter(self) -> None:
+        """Вхід в «Управління»: підключити й показати потік вибраної камери."""
+        self._active = True
+        self._sync_stream()
+        self.refresh()
+
+    def leave(self) -> None:
+        self._active = False
+        self._sync_stream()
+
+    def _sync_stream(self) -> None:
+        video = getattr(self.ctx, "video", None)
+        if video is None:
+            return
+        want = self._current if self._active else None
+        if want == self._streaming:
+            return
+        if self._streaming:
+            video.release(self._streaming)
+            self._streaming = None
+        self.preview.clear()
+        self.preview.setText("Немає кадру")
+        self.video_info.clear()
+        if want and video.acquire(want):
+            self._streaming = want
+
+    def _show_video(self) -> None:
+        video = getattr(self.ctx, "video", None)
+        if video is None or not self._streaming:
+            return
+        sf = video.latest(self._streaming)
+        st = video.stats(self._streaming)
+        if sf is not None:
+            pix = frame_pixmap(sf.image)
+            self.preview.setPixmap(pix.scaled(self.preview.width(), self.preview.height(),
+                                              Qt.AspectRatioMode.KeepAspectRatio,
+                                              Qt.TransformationMode.SmoothTransformation))
+        if st is not None and not st.connected:
+            self.video_info.setText(f"Потік: немає ({st.last_error or 'підключення…'})")
+            self.video_info.setStyleSheet(f"color: {BAD}")
+        elif sf is not None and st is not None:
+            size = f"{st.frame_size[0]}×{st.frame_size[1]}" if st.frame_size else "…"
+            ang = ("без кутів (немає звʼязку з сервоприводами)" if not sf.has_angles else
+                   f"кадр знято при азимуті {(sf.angles.azimuth_deg + self.service.config(self._streaming).north_offset_deg) % 360:.1f}°, "
+                   f"куті місця {sf.angles.elevation_deg:.1f}°")
+            self.video_info.setText(f"{size}, {st.fps:.1f} кадрів/с · {ang}")
+            self.video_info.setStyleSheet("" if sf.has_angles else f"color: {WARN}")
+
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
-        self._current = item.data(Qt.UserRole) if item else None
+        self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
+        self._sync_stream()
         self.title.setText(f"Камери / Управління · {self._current}" if self._current else "Камери / Управління")
         self.message.clear()
         self._load_form()
         self.refresh()
 
+    def _load_demo(self) -> None:
+        rec = self._record()
+        self._loading_demo = True
+        for box, value in ((self.demo_servos, rec.demo_servos if rec else False),
+                           (self.demo_video, rec.demo_video if rec else False)):
+            box.setChecked(bool(value))
+            box.setEnabled(rec is not None)
+        self._loading_demo = False
+
+    def _record(self):
+        if not self._current or self.ctx is None:
+            return None
+        cfg = self.service.config(self._current)
+        return self.ctx.camera(cfg.camera_id)
+
+    def _on_demo(self, servos=None, video=None) -> None:
+        if getattr(self, "_loading_demo", False) or self.ctx is None or not self._current:
+            return
+        name = self._current
+        self.ctx.set_demo(self.service.config(name).camera_id, servos=servos, video=video)
+        what = "сервоприводів" if servos is not None else "відео"
+        on = servos if servos is not None else video
+        self._say(f"{name}: демо {what} {'увімкнено' if on else 'вимкнено'}")
+        self._load_form()
+
     def _load_form(self) -> None:
         if not self._current:
             return
+        self._load_demo()
         cfg = self.service.config(self._current)
         self.port.setText(cfg.port)
         idx = self.baud.findData(cfg.baudrate)
@@ -366,10 +474,12 @@ class ControlScreen(QWidget):
                 continue
             color = GOOD if st.link_ok and not st.error_flags else (WARN if st.link_ok else BAD)
             item.setIcon(_dot(color))
-            item.setText(f"{st.name} · {st.link_text}")
+            demo = self.service.config(st.name).demo
+            item.setText(f"{st.name} · {st.link_text}" + (" · демо" if demo else ""))
             item.setToolTip(st.error_text or st.link_text)
             if st.name == self._current:
                 self._show_status(st)
+        self._show_video()
 
     def _show_status(self, st: CameraStatus) -> None:
         self.cur_az.setText(f"Азимут: {_fmt(st.azimuth_deg)}")
@@ -377,8 +487,12 @@ class ControlScreen(QWidget):
         self.cur_move.setText("Рух: рухається" if st.moving else "Рух: стоїть")
         self.link_label.setText(st.link_text)
         self.link_label.setStyleSheet(f"color: {GOOD if st.link_ok else BAD}")
-        self.error_label.setText(st.error_text)
-        self.error_label.setVisible(bool(st.error_text))
+        err = st.error_text
+        ros_error = getattr(self.service.backend, "ros_error", "")
+        if not st.link_ok and ros_error and not self.service.config(st.name).demo:
+            err = ros_error + " — увімкніть «Демо сервоприводів» або встановіть ROS 2"
+        self.error_label.setText(err)
+        self.error_label.setVisible(bool(err))
         cfg = self.service.config(st.name)
         self.cols["pan"].show_telemetry(st.pan, cfg.pan.temperature_limit_c)
         self.cols["tilt"].show_telemetry(st.tilt, cfg.tilt.temperature_limit_c)
@@ -402,7 +516,7 @@ class ControlScreen(QWidget):
         try:
             az, el = self.service.go_to(self._current, self.tgt_az.value(), self.tgt_el.value(),
                                         self.speed.value())
-        except ManualControlLocked as e:
+        except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
             return
         if abs(el - self.tgt_el.value()) > 1e-6 or abs((az - self.tgt_az.value() + 180) % 360 - 180) > 1e-6:
@@ -416,7 +530,7 @@ class ControlScreen(QWidget):
         step = self.step.value()
         try:
             self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
-        except ManualControlLocked as e:
+        except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
 
     def _on_stop(self) -> None:

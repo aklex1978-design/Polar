@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import abc
 from concurrent.futures import Future
-from typing import Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from polar_core.control import CameraControlConfig, CameraSnapshot, RosSettings
 
@@ -11,6 +11,14 @@ from polar_core.control import CameraControlConfig, CameraSnapshot, RosSettings
 class ControlBackend(abc.ABC):
     """Усі кути — кути камери (без зміщення від півночі). Методи не блокують:
     команди відправляються одразу, сервіси повертають Future."""
+
+    def add_state_listener(self, fn: Callable[[str, CameraSnapshot], None]) -> None:
+        """fn(назва камери, стан) викликається для кожного повідомлення state (з робочого потоку)."""
+        self.__dict__.setdefault("_listeners", []).append(fn)
+
+    def _emit(self, name: str, snap: CameraSnapshot) -> None:
+        for fn in self.__dict__.get("_listeners", ()):
+            fn(name, snap)
 
     @abc.abstractmethod
     def start(self, cameras: Iterable[CameraControlConfig], ros: RosSettings) -> None:

@@ -5,9 +5,9 @@ import time
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-QtWidgets = pytest.importorskip("PyQt5.QtWidgets")
+QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
 
-from PyQt5.QtCore import QCoreApplication  # noqa: E402
+from PyQt6.QtCore import QCoreApplication  # noqa: E402
 
 from polar_app.control.service import ControlService  # noqa: E402
 from polar_app.control.sim import SimControlBackend  # noqa: E402
