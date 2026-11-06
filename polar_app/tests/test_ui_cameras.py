@@ -462,3 +462,35 @@ def test_cameras_grid_step_panorama_and_save(win):
     assert "Збережено" in t.message.text(), t.message.text()
     assert wait(3, lambda: t.panorama.pixmap is not None and "покриття" in t.title.text())
     win.show_cameras()
+
+
+def test_snapshot_window_follows_camera(win, tmp_path):
+    """«Знімок»: окреме вікно зі знімком для поточного положення; поворот камери — інший знімок."""
+    name = win.ctx.records()[0].name
+    win.stack.setCurrentWidget(win.grid)
+    g = win.grid
+    t = g.tiles[name]
+    assert wait(6, lambda: t.view.pixmap is not None and t.btn_up.isEnabled())
+
+    def still(el):
+        sf = win.ctx.video.latest(name)
+        return sf is not None and sf.has_angles and not sf.angles.moving and abs(sf.angles.elevation_deg - el) < 0.5
+
+    w = g.open_snapshot(name)
+    assert w.isVisible() and w.windowTitle() == f"Знімок · {name}"
+    assert wait(5, lambda: "знімка ще немає" in w.info.text())
+    paths = []
+    for _ in range(2):
+        t.btn_up.click()
+        el = float(t.message.text().split("кут місця ")[1].split("°")[0])
+        assert wait(15, lambda: still(el))
+        time.sleep(0.3)
+        t.save_btn.click()
+        assert "Збережено" in t.message.text(), t.message.text()
+        assert wait(3, lambda: w.path is not None and w.path not in paths)
+        paths.append(w.path)
+    t.btn_down.click()                                            # назад — знову перший знімок
+    assert wait(15, lambda: w.path == paths[0])
+    assert w.image.pixmap() is not None and not w.image.pixmap().isNull()
+    win.show_cameras()
+    w.close()

@@ -55,3 +55,18 @@ def test_step_helpers():
     assert next_row(rows, 45.0, -1) == 30.0 and next_row(rows, 60.0, +1) == 60.0   # між рядами / край
     assert next_azimuth(0.0, 45.0, +1) == 45.0 and next_azimuth(0.3, 45.0, -1) == 315.0
     assert next_azimuth(50.0, 45.0, -1) == 45.0 and next_azimuth(44.8, 45.0, +1) == 90.0
+
+
+def test_nearest_snapshot_follows_position(tmp_path):
+    from polar_app.screenshots import nearest_snapshot
+    d = str(tmp_path / "s")
+    g = GridSnapshots(d, north_offset_deg=0.0, az_step_deg=45.0, elevations=[0, 30, 60])
+    g.reset()
+    assert nearest_snapshot(d, 0.0, 0.0) is None
+    g.offer(frame(1, 0.0, 0.0))
+    g.offer(frame(2, 45.0, 30.0))
+    path, e = nearest_snapshot(d, 10.0, 5.0)                       # клітинка вузла 0°/0°
+    assert path.endswith(os.path.join("el_00", "az_000.jpg"))
+    assert nearest_snapshot(d, 350.0, 14.0)[1]["azimuth_node"] == 0.0     # через 0/360
+    assert nearest_snapshot(d, 50.0, 31.0)[1]["azimuth_node"] == 45.0     # перейшли — інший знімок
+    assert nearest_snapshot(d, 90.0, 60.0) is None                 # для цього положення знімка немає

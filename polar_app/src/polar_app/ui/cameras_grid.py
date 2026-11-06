@@ -2,7 +2,7 @@
 
 Під кожною камерою — її панорама з фігурою поля зору, кнопки кроку камери (▲ ▼ — на VFOV/2, ◀ ▶ — на
 HFOV/2, по вузлах сітки Навчання) і «Зберегти»: поточний кадр нерухомої камери записується в панораму і
-в знімки камери.
+в знімки камери. «Знімок» відкриває окреме вікно зі збереженим знімком для поточного положення камери.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from polar_core.control import ManualControlLocked
 
 from .calibration_screen import CameraView, PanoramaView
 from .common import BAD, GOOD, frame_pixmap
+from .snapshot_window import SnapshotWindow
 
 
 class CameraTile(QWidget):
@@ -54,6 +55,9 @@ class CameraTile(QWidget):
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.setToolTip("Записати поточний кадр нерухомої камери в панораму і в знімки камери")
         row.addWidget(self.save_btn)
+        self.snap_btn = QPushButton("Знімок")
+        self.snap_btn.setToolTip("Окреме вікно зі збереженим знімком для поточного положення камери")
+        row.addWidget(self.snap_btn)
         self.message = QLabel("")
         self.message.setWordWrap(True)
         row.addWidget(self.message, 1)
@@ -71,6 +75,7 @@ class CamerasGridScreen(QWidget):
         self.tiles = {}
         self._held = []
         self._last_frame = {}
+        self.snapshot_windows = {}
         v = QVBoxLayout(self)
         title = QLabel("Робота / Камери")
         title.setStyleSheet("font-size: 15px; font-weight: 600")
@@ -99,6 +104,7 @@ class CamerasGridScreen(QWidget):
             tile.btn_up.clicked.connect(lambda _=False, nm=rec.name: self.step(nm, 0, +1))
             tile.btn_down.clicked.connect(lambda _=False, nm=rec.name: self.step(nm, 0, -1))
             tile.save_btn.clicked.connect(lambda _=False, nm=rec.name: self.save(nm))
+            tile.snap_btn.clicked.connect(lambda _=False, nm=rec.name: self.open_snapshot(nm))
             self.tiles[rec.name] = tile
             self.grid.addWidget(tile, i // cols, i % cols)
             if self.ctx.video.acquire(rec.name):
@@ -121,6 +127,19 @@ class CamerasGridScreen(QWidget):
             return
         if tile:
             tile.say(f"→ азимут {az:.1f}°, кут місця {el:.1f}°")
+
+    def open_snapshot(self, name: str) -> SnapshotWindow:
+        w = self.snapshot_windows.get(name)
+        if w is None:
+            w = SnapshotWindow(self.ctx, name)
+            self.snapshot_windows[name] = w
+        else:
+            w.timer.start(250)
+            w.refresh()
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        return w
 
     def save(self, name: str) -> None:
         tile = self.tiles.get(name)

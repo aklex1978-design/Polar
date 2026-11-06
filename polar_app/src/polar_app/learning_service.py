@@ -245,6 +245,21 @@ class LearningService:
             return wrap360(st.azimuth_deg), st.elevation_deg, size
         raise RuntimeError(f"{name}: немає кутів камери (немає звʼязку з сервоприводами)")
 
+    def snapshot_for(self, name: str):
+        """Збережений знімок для поточного положення камери: (повний шлях, запис index.json, азимут від
+        півночі, кут місця). Без кутів — None; без знімка для цього положення — (None, None, азимут, місце)."""
+        from .screenshots import nearest_snapshot
+
+        rec = self._rec(name)
+        if rec is None:
+            return None
+        try:
+            az, el, _size = self._pose(name, rec)
+        except RuntimeError:
+            return None
+        found = nearest_snapshot(self.screenshots_dir(rec), az, el)
+        return (found[0], found[1], az, el) if found else (None, None, az, el)
+
     def step(self, name: str, d_az: int, d_el: int):
         """Повернути камеру на сусідній вузол сітки Навчання: по азимуту на HFOV/2, по куту місця на
         VFOV/2 (вузли ті самі, що й у Навчання, тож знімки «Зберегти» лягають на вузли).

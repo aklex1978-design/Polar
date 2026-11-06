@@ -92,6 +92,8 @@ class MainWindow(QMainWindow):
         self.work.timer.stop()
         self.grid.leave()
         self.grid.timer.stop()
+        for w in self.grid.snapshot_windows.values():
+            w.close()
         self.control.timer.stop()
         self.form.timer.stop()
         self.ctx.shutdown()

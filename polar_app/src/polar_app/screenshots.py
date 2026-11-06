@@ -130,3 +130,50 @@ class GridSnapshots:
     @property
     def total(self) -> int:
         return len(self.elevations) * int(round(360.0 / self.az_step))
+
+
+_INDEX_CACHE: Dict[str, Tuple[float, dict]] = {}
+
+
+def read_index(directory: str) -> dict:
+    """index.json набору знімків (з кешем за часом зміни файлу); порожній, якщо файлу немає."""
+    path = os.path.join(directory, "index.json")
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+    cached = _INDEX_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    _INDEX_CACHE[path] = (mtime, data)
+    return data
+
+
+def nearest_snapshot(directory: str, az_north: float, el: float) -> Optional[Tuple[str, dict]]:
+    """Знімок для положення камери: найближчий вузол, у клітинці якого (± пів кроку по азимуту і по куту
+    місця) перебуває камера. Повертає (повний шлях, запис index.json) або None."""
+    data = read_index(directory)
+    snaps = data.get("snapshots") or {}
+    if not snaps:
+        return None
+    az_step = float(data.get("azimuth_step_deg") or 360.0)
+    rows = sorted(float(e) for e in data.get("elevations_deg") or [])
+    el_step = min((b - a for a, b in zip(rows, rows[1:])), default=90.0)
+    best, best_d = None, None
+    for entry in snaps.values():
+        d_az = abs(wrap180(az_north - float(entry.get("azimuth_node", entry.get("azimuth_deg", 0.0)))))
+        d_el = abs(el - float(entry.get("elevation_node", entry.get("elevation_deg", 0.0))))
+        if d_az > az_step / 2 + 1e-6 or d_el > el_step / 2 + 1e-6:
+            continue
+        d = (d_az / az_step) ** 2 + (d_el / el_step) ** 2
+        if best_d is None or d < best_d:
+            best, best_d = entry, d
+    if best is None:
+        return None
+    path = os.path.join(directory, best["file"])
+    return (path, best) if os.path.isfile(path) else None

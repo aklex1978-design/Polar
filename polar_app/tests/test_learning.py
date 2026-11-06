@@ -143,5 +143,9 @@ def test_step_and_save_current(ctx):
         assert 0 < cov < 0.3 and os.path.isfile(path)
         assert os.path.dirname(os.path.dirname(path)) == ctx.learning.screenshots_dir(rec)   # вузол el_XX/az_XXX
         assert Panorama.exists(cm.get_camera(ctx.conn, rec.id).panorama_path)
+        found = ctx.learning.snapshot_for(name)                       # вікно «Знімок» — для цього положення
+        assert found[0] == path and found[1]["elevation_node"] == pytest.approx(el2, abs=0.01)
+        ctx.learning.step(name, 0, -1)
+        assert wait(10, lambda: ctx.learning.snapshot_for(name)[0] is None)   # інше положення — знімка немає
     finally:
         ctx.video.release(name)
