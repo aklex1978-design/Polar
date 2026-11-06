@@ -11,21 +11,24 @@ def frame(i, az, el, moving=False):
     return StampedFrame(np.full((4, 6, 3), i, np.uint8), float(i), i, FrameAngles(az, el, moving, float(i), 0.0))
 
 
-def test_nodes_and_replacement(tmp_path):
-    g = GridSnapshots(str(tmp_path / "s"), north_offset_deg=15.0)
+def test_nodes_follow_half_fov(tmp_path):
+    # HFOV 45° → крок 22,5°; ряди Навчання 0, 17, 34 …
+    g = GridSnapshots(str(tmp_path / "s"), north_offset_deg=15.0, az_step_deg=22.5, elevations=[0, 17, 34])
     g.reset()
-    assert g.total == 8 * 36
-    assert g.offer(frame(1, 35.2, 20.3, moving=True))           # азимут від півночі 50,2°, кут місця 20,3°
-    assert g.offer(frame(2, 35.0, 20.0, moving=True)) is None   # вузол уже є, і знову з руху
-    assert g.offer(frame(3, 35.1, 19.9))                        # нерухомий замінює знімок з руху
-    assert g.offer(frame(4, 35.0, 20.0)) is None
-    assert g.offer(frame(5, 40.0, 25.0)) is None                # не на вузлі
-    assert g.offer(frame(6, 345.0, 90.0)) is None               # 90° — поза 10…80°
-    assert g.offer(frame(7, 345.2, 10.0))                       # азимут 0,2° від півночі → вузол 0°
-    assert g.count == 2
+    assert g.total == 3 * 16
+    assert g.offer(frame(1, 30.2, 17.1, moving=True)) is None      # у русі — не зберігається
+    assert g.offer(frame(2, 30.2, 17.1))                          # від півночі 45,2° → вузол 45°, ряд 17°
+    assert g.offer(frame(3, 30.0, 17.0)) is None                  # вузол уже є
+    assert g.offer(frame(4, 40.0, 17.0)) is None                  # не на вузлі
+    assert g.offer(frame(5, 352.5, 34.0)) is None                 # від півночі 7,5° — між вузлами
+    assert g.offer(frame(6, 345.0, 34.0))                         # від півночі 0° → вузол 0°
     idx = json.load(open(tmp_path / "s" / "index.json", encoding="utf-8"))
-    assert idx["20/50"]["moving"] is False and idx["20/50"]["file"] == os.path.join("el_20", "az_050.jpg")
-    assert idx["10/0"]["azimuth_deg"] == 0.2
-    assert os.path.isfile(tmp_path / "s" / "el_10" / "az_000.jpg")
+    assert idx["azimuth_step_deg"] == 22.5 and idx["elevations_deg"] == [0.0, 17.0, 34.0]
+    assert "17/045" in idx["snapshots"]
+    assert os.path.isfile(tmp_path / "s" / "el_17" / "az_045.jpg")
+
+
+def test_fractional_names(tmp_path):
+    g = GridSnapshots(str(tmp_path / "s"), north_offset_deg=0.0, az_step_deg=22.5, elevations=[0])
     g.reset()
-    assert g.count == 0 and not os.path.exists(tmp_path / "s" / "el_10")
+    assert g.offer(frame(1, 22.5, 0.0)).endswith(os.path.join("el_00", "az_022.5.jpg"))

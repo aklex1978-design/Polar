@@ -88,13 +88,14 @@ def test_manual_input_writes_frame(ctx):
     ctx.video.release("Камера 1")
 
 
-def test_snapshots_on_10_degree_nodes(tmp_path):
-    """Знімки на кутах, кратних 10° (кут місця 10…80°), — паралельно з Навчанням, без окремого проходу."""
+def test_snapshot_on_every_learning_step(tmp_path):
+    """Знімок на кожному кроці Навчання: крок — половина кута огляду (по азимуту HFOV/2, по куту місця
+    VFOV/2), азимут від півночі кратний кроку; без окремого проходу."""
     path = str(tmp_path / "polar.sqlite")
     conn = db.connect(path)
     seed_demo(conn)
-    with conn:   # кадр 4:3 і VFOV 40° → ряди 0, 20, 40, 60, 80°; крок по азимуту 30°
-        conn.execute("UPDATE cameras SET fov_x_deg = 60, fov_y_deg = 40, stream_res_x = 640, stream_res_y = 480, "
+    with conn:
+        conn.execute("UPDATE cameras SET fov_x_deg = 90, fov_y_deg = 60, stream_res_x = 640, stream_res_y = 480, "
                      "north_offset_deg = 5")
         conn.execute("UPDATE servo_settings SET max_speed_deg_s = 360")
         conn.execute("DELETE FROM cameras WHERE name != 'Камера 1'")
@@ -107,14 +108,13 @@ def test_snapshots_on_10_degree_nodes(tmp_path):
         assert st.state == "done", st.message
         import json
         idx = json.load(open(os.path.join(st.snapshots_dir, "index.json"), encoding="utf-8"))
-        still = [k for k, v in idx.items() if not v["moving"]]
-        # кожен крок плану на кутах місця 20/40/60/80 — вузол сітки: азимути від півночі 10, 40, 70 … (кратні 10°)
-        assert len(still) >= 4 * 12, len(still)
-        assert {int(k.split("/")[0]) for k in still} == {20, 40, 60, 80}
-        assert all(int(k.split("/")[1]) % 10 == 0 for k in still)
-        v = idx["40/100"]
-        assert abs(v["azimuth_deg"] - 100) <= 0.5 and abs(v["elevation_deg"] - 40) <= 0.5
+        snaps = idx["snapshots"]
+        assert idx["azimuth_step_deg"] == 45.0 and idx["elevations_deg"] == [0.0, 30.0, 60.0]
+        assert len(snaps) == st.steps == 8 * 3 and st.snapshots == 24       # знімок на кожному кроці
+        assert {v["azimuth_node"] for v in snaps.values()} == {i * 45.0 for i in range(8)}
+        v = snaps["30/090"]
+        assert abs(v["azimuth_deg"] - 90) <= 0.5 and abs(v["elevation_deg"] - 30) <= 0.5
         assert os.path.isfile(os.path.join(st.snapshots_dir, v["file"]))
-        assert "знімків" in st.message
+        assert "знімків: 24" in st.message
     finally:
         c.shutdown()

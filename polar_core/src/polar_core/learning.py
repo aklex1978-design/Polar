@@ -30,8 +30,11 @@ def learning_plan(hfov_deg: float, vfov_deg: float, el_min: float = 0.0, el_max:
     return plan
 
 
-def aligned_start(north_offset_deg: float, hfov_deg: float, grid_deg: float = 10.0) -> float:
-    """Зсув плану, за якого кроки по азимуту від півночі кратні grid_deg (якщо крок HFOV/2 це дозволяє)."""
-    step = 360.0 / max(1, int(math.ceil(360.0 / (hfov_deg / 2.0) - 1e-9)))
-    unit = grid_deg if abs(step / grid_deg - round(step / grid_deg)) < 1e-6 else step
-    return (-north_offset_deg) % unit
+def az_step(hfov_deg: float) -> float:
+    """Крок по азимуту: не більше HFOV/2 і рівно ділить коло."""
+    return 360.0 / max(1, int(math.ceil(360.0 / (hfov_deg / 2.0) - 1e-9)))
+
+
+def aligned_start(north_offset_deg: float, hfov_deg: float) -> float:
+    """Зсув плану, за якого кроки по азимуту від півночі кратні самому кроку (0°, крок, 2 кроки …)."""
+    return (-north_offset_deg) % az_step(hfov_deg)

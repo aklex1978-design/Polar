@@ -100,7 +100,7 @@ class WorkScreen(QWidget):
             cov = st.coverage if st.state == RUNNING else (pano.coverage() if pano else 0.0)
             dc = det.camera(rec.name)
             if st.state == RUNNING:
-                state, detail = st.text, f"{st.message} · знімків на кутах, кратних 10°: {st.snapshots}"
+                state, detail = st.text, f"{st.message} · знімків: {st.snapshots}"
             elif det.active:
                 state = dc.state
                 objs = dc.result.objects if dc.result else []
