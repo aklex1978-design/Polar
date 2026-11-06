@@ -436,3 +436,29 @@ def test_cameras_grid_and_tracking_button(win):
     win.work.track_btn.click()
     assert "Немає жодної панорами" in win.work.message.text()
     assert not win.ctx.detection.active
+
+
+def test_cameras_grid_step_panorama_and_save(win):
+    """Під кожною камерою — панорама, кнопки кроку на пів кута огляду і «Зберегти»."""
+    name = win.ctx.records()[0].name
+    win.stack.setCurrentWidget(win.grid)
+    g = win.grid
+    t = g.tiles[name]
+    assert t.panorama.pixmap is None and "панорами ще немає" in t.title.text()
+    assert wait(6, lambda: t.view.pixmap is not None and t.btn_up.isEnabled())
+    assert wait(5, lambda: t.panorama.outline is not None)            # фігура поля зору на сітці
+    t.btn_up.click()
+    assert "кут місця" in t.message.text()
+    target_el = float(t.message.text().split("кут місця ")[1].split("°")[0])
+    assert target_el > 0
+
+    def still():
+        sf = win.ctx.video.latest(name)
+        return sf is not None and sf.has_angles and not sf.angles.moving and \
+            abs(sf.angles.elevation_deg - target_el) < 0.5
+    assert wait(15, still)
+    time.sleep(0.3)
+    t.save_btn.click()
+    assert "Збережено" in t.message.text(), t.message.text()
+    assert wait(3, lambda: t.panorama.pixmap is not None and "покриття" in t.title.text())
+    win.show_cameras()

@@ -118,3 +118,30 @@ def test_snapshot_on_every_learning_step(tmp_path):
         assert "знімків: 24" in st.message
     finally:
         c.shutdown()
+
+
+def test_step_and_save_current(ctx):
+    """«Робота / Камери»: крок камери по вузлах сітки Навчання і «Зберегти» — у панораму та знімки."""
+    name = "Камера 1"
+    assert wait(5, lambda: ctx.control.status(name).link_ok)
+    assert ctx.video.acquire(name)
+    rec = ctx.records()[0]
+    try:
+        assert wait(5, lambda: ctx.video.latest(name) is not None and ctx.video.latest(name).has_angles)
+        az, el = ctx.learning.step(name, 0, +1)
+        assert el > 0
+        az2, el2 = ctx.learning.step(name, +1, 0)
+        assert el2 == pytest.approx(el) and az2 % 45.0 == pytest.approx(0.0, abs=1e-6)   # HFOV 90 → крок 45°
+
+        def still():
+            sf = ctx.video.latest(name)
+            return sf is not None and sf.has_angles and not sf.angles.moving and \
+                abs(sf.angles.elevation_deg - el2) < 0.5
+        assert wait(10, still)
+        time.sleep(0.3)
+        cov, path = ctx.learning.save_current(name)
+        assert 0 < cov < 0.3 and os.path.isfile(path)
+        assert os.path.dirname(os.path.dirname(path)) == ctx.learning.screenshots_dir(rec)   # вузол el_XX/az_XXX
+        assert Panorama.exists(cm.get_camera(ctx.conn, rec.id).panorama_path)
+    finally:
+        ctx.video.release(name)

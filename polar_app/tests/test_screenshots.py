@@ -32,3 +32,26 @@ def test_fractional_names(tmp_path):
     g = GridSnapshots(str(tmp_path / "s"), north_offset_deg=0.0, az_step_deg=22.5, elevations=[0])
     g.reset()
     assert g.offer(frame(1, 22.5, 0.0)).endswith(os.path.join("el_00", "az_022.5.jpg"))
+
+
+def test_manual_save_keeps_index(tmp_path):
+    g = GridSnapshots(str(tmp_path / "s"), north_offset_deg=0.0, az_step_deg=45.0, elevations=[0, 30])
+    g.reset()
+    assert g.offer(frame(1, 45.0, 30.0))
+    g2 = GridSnapshots(str(tmp_path / "s"), north_offset_deg=0.0, az_step_deg=45.0, elevations=[0, 30])
+    g2.load()                                                     # набір Навчання зберігається
+    assert g2.save(frame(2, 45.1, 30.0)).endswith(os.path.join("el_30", "az_045.jpg"))   # вузол — замінено
+    off = g2.save(frame(3, 60.0, 12.5))                           # поза вузлом — у manual/
+    assert off.endswith(os.path.join("manual", "el_12.5_az_060.jpg")) and os.path.isfile(off)
+    idx = json.load(open(tmp_path / "s" / "index.json", encoding="utf-8"))["snapshots"]
+    assert idx["30/045"]["manual"] and "manual/12.5/060" in idx and g2.count == 1
+
+
+def test_step_helpers():
+    from polar_core.learning import elevation_rows, next_azimuth, next_row
+    rows = elevation_rows(60.0, 0.0, 90.0)
+    assert rows == [0.0, 30.0, 60.0]
+    assert next_row(rows, 0.2, +1) == 30.0 and next_row(rows, 30.0, -1) == 0.0
+    assert next_row(rows, 45.0, -1) == 30.0 and next_row(rows, 60.0, +1) == 60.0   # між рядами / край
+    assert next_azimuth(0.0, 45.0, +1) == 45.0 and next_azimuth(0.3, 45.0, -1) == 315.0
+    assert next_azimuth(50.0, 45.0, -1) == 45.0 and next_azimuth(44.8, 45.0, +1) == 90.0

@@ -6,6 +6,8 @@
 кратний кроку (0°, HFOV/2, HFOV …).
 
 Файли: <каталог>/el_<кут місця>/az_<азимут від півночі>.jpg і index.json з фактичними кутами.
+Кнопка «Зберегти» на «Робота / Камери» дописує знімок: на вузлі — замінює знімок вузла, поза вузлом —
+<каталог>/manual/el_<кут місця>_az_<азимут>.jpg.
 """
 from __future__ import annotations
 
@@ -53,10 +55,17 @@ class GridSnapshots:
             return None
         return el_n, round(az_n, 6)
 
+    def load(self) -> None:
+        """Продовжити наявний набір (ручне збереження): прочитати index.json, якщо він є."""
+        os.makedirs(self.directory, exist_ok=True)
+        try:
+            with open(os.path.join(self.directory, "index.json"), encoding="utf-8") as fh:
+                self.index = dict(json.load(fh).get("snapshots", {}))
+        except (OSError, ValueError):
+            self.index = {}
+
     def offer(self, sf) -> Optional[str]:
         """Зберегти кадр нерухомої камери, якщо він на вузлі. Повертає шлях або None."""
-        import cv2
-
         if sf is None or not sf.has_angles or sf.angles.moving or sf.index == self._last_frame:
             return None
         self._last_frame = sf.index
@@ -65,20 +74,50 @@ class GridSnapshots:
         node = self.node(az_north, a.elevation_deg)
         if node is None:
             return None
-        key = f"{_deg(node[0], 2)}/{_deg(node[1], 3)}"
+        return self._write(sf, node, az_north, overwrite=False, manual=False)
+
+    def save(self, sf) -> str:
+        """Ручне збереження (кнопка «Зберегти»): на вузлі знімок вузла замінюється, поза вузлом —
+        окремий файл у manual/ за фактичними кутами. Повертає шлях."""
+        if sf is None or not sf.has_angles:
+            raise ValueError("немає кадру з кутами")
+        a = sf.angles
+        az_north = wrap360(a.azimuth_deg + self.north_offset_deg)
+        node = self.node(az_north, a.elevation_deg)
+        manual = node is None
+        if manual:
+            node = (round(a.elevation_deg, 1), round(az_north, 1))
+        path = self._write(sf, node, az_north, overwrite=True, manual=manual)
+        if path is None:
+            raise OSError(f"не вдалося записати знімок у {self.directory}")
+        return path
+
+    def _write(self, sf, node, az_north, overwrite: bool, manual: bool) -> Optional[str]:
+        import cv2
+
+        a = sf.angles
+        el_s, az_s = _deg(node[0], 2), _deg(node[1], 3)
+        key = f"manual/{el_s}/{az_s}" if manual else f"{el_s}/{az_s}"
         with self._lock:
-            if key in self.index:
+            if key in self.index and not overwrite:
                 return None
-            path = os.path.join(self.directory, f"el_{_deg(node[0], 2)}", f"az_{_deg(node[1], 3)}.jpg")
+            if manual:
+                path = os.path.join(self.directory, "manual", f"el_{el_s}_az_{az_s}.jpg")
+            else:
+                path = os.path.join(self.directory, f"el_{el_s}", f"az_{az_s}.jpg")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             if not cv2.imwrite(path, sf.image, [cv2.IMWRITE_JPEG_QUALITY, 92]):
                 return None
-            self.index[key] = {
-                "file": os.path.relpath(path, self.directory), "elevation_node": node[0], "azimuth_node": node[1],
+            entry = {
+                "file": os.path.relpath(path, self.directory).replace(os.sep, "/"),
+                "elevation_node": node[0], "azimuth_node": node[1],
                 "azimuth_deg": round(az_north, 3), "sensor_deg": round(wrap360(a.azimuth_deg), 3),
                 "elevation_deg": round(a.elevation_deg, 3),
                 "time": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
             }
+            if manual or overwrite:
+                entry["manual"] = True
+            self.index[key] = entry
             with open(os.path.join(self.directory, "index.json"), "w", encoding="utf-8") as fh:
                 json.dump({"azimuth_step_deg": self.az_step, "elevations_deg": list(self.elevations),
                            "snapshots": self.index}, fh, ensure_ascii=False, indent=1)
@@ -86,7 +125,7 @@ class GridSnapshots:
 
     @property
     def count(self) -> int:
-        return len(self.index)
+        return sum(1 for k in self.index if not k.startswith("manual/"))
 
     @property
     def total(self) -> int:
