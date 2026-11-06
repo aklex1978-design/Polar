@@ -110,6 +110,10 @@ class CameraView(QWidget):
             p.setPen(QColor("#bbbbbb"))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Немає кадру")
         if self.model is None:
+            if self.text_lines:                      # напр. «Немає звʼязку · останній кадр …»
+                p.setPen(QColor("#ff9f0a"))
+                for i, line in enumerate(self.text_lines):
+                    p.drawText(QPointF(r.left() + 12, r.top() + 22 + 16 * i), line)
             p.end()
             return
         m = self.model
