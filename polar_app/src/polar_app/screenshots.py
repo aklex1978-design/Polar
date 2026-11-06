@@ -175,5 +175,5 @@ def nearest_snapshot(directory: str, az_north: float, el: float) -> Optional[Tup
             best, best_d = entry, d
     if best is None:
         return None
-    path = os.path.join(directory, best["file"])
+    path = os.path.normpath(os.path.join(directory, *best["file"].split("/")))   # у index.json — «/»
     return (path, best) if os.path.isfile(path) else None
