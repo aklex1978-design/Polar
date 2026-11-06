@@ -20,6 +20,9 @@ class AppContext:
         self.box = box
         self.control = control
         self.video = video
+        from .learning_service import LearningService
+
+        self.learning = LearningService(self)
 
     def camera(self, camera_id: int) -> CameraRecord:
         with self.control._db_lock:
@@ -64,11 +67,16 @@ class AppContext:
             pass
         with self.control._db_lock:
             panorama = cm.delete_camera(self.conn, camera_id)
-        if panorama and os.path.isfile(panorama):
-            os.remove(panorama)
+        self.learning.forget(rec.name)
+        if panorama:
+            base = os.path.splitext(panorama)[0]
+            for f in (panorama, base + ".coverage.png", base + ".json"):
+                if os.path.isfile(f):
+                    os.remove(f)
         self.control.reload()
         self.control.start()
 
     def shutdown(self) -> None:
+        self.learning.shutdown()
         self.video.shutdown()
         self.control.shutdown()

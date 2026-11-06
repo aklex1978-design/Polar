@@ -53,8 +53,31 @@ win.edit_camera(ctx.records()[0].id)
 pump(2.5)
 win.grab().save(os.path.join(out_dir, "camera_form.png"))
 
-win.calibrate_camera(ctx.records()[0].id)
+# Навчання першої камери (широкий кут — швидше), потім калібрування з панорамою і маскою
+rec0 = ctx.records()[0]
+with ctx.conn:
+    ctx.conn.execute("UPDATE cameras SET fov_x_deg = 90, fov_y_deg = 60 WHERE id = ?", (rec0.id,))
+    ctx.conn.execute("UPDATE servo_settings SET max_speed_deg_s = 360 WHERE camera_id = ?", (rec0.id,))
+    ctx.conn.execute("INSERT INTO detection_mask (camera_id, kind, el_from) VALUES (?, 'el_max', 82)", (rec0.id,))
+    ctx.conn.execute("INSERT INTO detection_mask (camera_id, kind, az_from, az_to, el_from, el_to) "
+                     "VALUES (?, 'rect', 200, 240, 0, 12)", (rec0.id,))
+ctx.control.reload()
+ctx.control.start()
+ctx.learning.max_px_per_deg = 4.0
+win.stack.setCurrentWidget(win.work)
+pump(1.0)
+win.work.learn_btn.click()
+pump(4.0)
+win.grab().save(os.path.join(out_dir, "work.png"))
+end = time.monotonic() + 150
+while ctx.learning.is_running() and time.monotonic() < end:
+    pump(0.5)
+ctx.control.go_to(rec0.name, 75.0, 25.0)
+pump(1.5)
+win.calibrate_camera(rec0.id)
 pump(2.0)
+win.calibration.zone_btn.setChecked(True)
+pump(0.3)
 win.grab().save(os.path.join(out_dir, "calibration.png"))
 
 win.edit_camera(None)

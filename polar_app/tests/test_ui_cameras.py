@@ -342,3 +342,80 @@ def test_calibration_tilt_field(win):
     assert "збережено" in c.message.text()
     win.edit_camera(rec.id)
     assert win.form.widgets["tilt_deg"].value() == 4.25                 # те саме поле, що в «Редагуванні»
+
+
+class _Ev:
+    """Подія миші для прямого виклику обробників (позиція у віджеті)."""
+
+    def __init__(self, p):
+        from PyQt6.QtCore import Qt
+        self._p, self._b = p, Qt.MouseButton.LeftButton
+
+    def position(self):
+        return self._p
+
+    def button(self):
+        return self._b
+
+
+def test_mask_editor_and_manual_input(win):
+    from polar_core.mask import LOWER, UPPER, load_mask
+
+    rec = win.ctx.records()[0]
+    win.calibrate_camera(rec.id)
+    c = win.calibration
+    assert "Панорами ще немає" in c.pano_label.text() or wait(1)
+    c.zone_btn.setChecked(True)
+    assert c.zone_bar.isVisible()
+    pv = c.panorama
+    pv.resize(1100, 300)
+    c.zone_tools["upper"].click()
+    pv.mousePressEvent(_Ev(pv._pt(100, 80)))
+    pv.mouseMoveEvent(_Ev(pv._pt(100, 78)))                         # лінію можна перетягнути
+    pv.mouseReleaseEvent(_Ev(pv._pt(100, 78)))
+    c.zone_tools["lower"].click()
+    pv.mousePressEvent(_Ev(pv._pt(10, 3)))
+    pv.mouseReleaseEvent(_Ev(pv._pt(10, 3)))
+    c.zone_tools["rect"].click()
+    pv.mousePressEvent(_Ev(pv._pt(120, 10)))
+    pv.mouseMoveEvent(_Ev(pv._pt(150, 25)))
+    pv.mouseReleaseEvent(_Ev(pv._pt(150, 25)))
+    assert "*" in c.save_mask_btn.text()
+    c.save_mask_btn.click()
+    m = load_mask(win.ctx.conn, rec.id)
+    assert m.limit(UPPER).el == pytest.approx(78, abs=0.5) and m.limit(LOWER).el == pytest.approx(3, abs=0.5)
+    r = m.rects()[0]
+    assert (r.az_from, r.az_to) == (pytest.approx(120, abs=0.6), pytest.approx(150, abs=0.6))
+    c.zone_tools["delete"].click()
+    pv.mousePressEvent(_Ev(pv._pt(135, 18)))                       # клік по прямокутнику — видалити
+    c.save_mask_btn.click()
+    assert len(load_mask(win.ctx.conn, rec.id).rects()) == 0
+    win.show_cameras()
+    win.calibrate_camera(rec.id)                                    # маска відновлюється
+    assert c.mask.limit(UPPER) is not None
+    # ручне введення: азимут ↔ кут датчика, фігура за введеними кутами, кадр — у панораму
+    assert wait(6, lambda: win.ctx.video.latest(rec.name) is not None)
+    c.manual_on.setChecked(True)
+    c.m_sensor.setValue(200.0)
+    assert c.m_az.value() == pytest.approx((200.0 + rec.north_offset_deg) % 360)
+    c.m_el.setValue(30.0)
+    c.refresh()
+    assert c.panorama.azimuth == pytest.approx((200.0 + rec.north_offset_deg) % 360)
+    c.manual_save.click()
+    assert "записано" in c.message.text()
+    assert wait(2, lambda: c.panorama.pixmap is not None and "покриття" in c.pano_label.text())
+
+
+def test_work_screen_learning(win):
+    win.stack.setCurrentWidget(win.work)
+    w = win.work
+    assert w.table.rowCount() == 3 and "Очікування" in w.mode.text()
+    assert wait(5, lambda: win.ctx.control.status("Камера 1").link_ok)
+    w.learn_btn.click()
+    assert wait(3, lambda: "Навчання" in w.mode.text())
+    assert win.ctx.learning.is_running()
+    assert wait(15, lambda: win.ctx.learning.status("Камера 1").step >= 2)
+    w.learn_btn.click()                                             # повторне натискання зупиняє
+    assert wait(25, lambda: not win.ctx.learning.is_running())
+    assert wait(3, lambda: "Очікування" in w.mode.text())
+    assert win.ctx.learning.status("Камера 1").state == "stopped"
