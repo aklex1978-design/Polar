@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from typing import Tuple
 
 from polar_core import cameras as cm
@@ -23,6 +24,12 @@ class AppContext:
         from .learning_service import LearningService
 
         self.learning = LearningService(self)
+        from .detection_service import DetectionService
+
+        self.detection = DetectionService(self)
+        # ТЗ: після завершення Навчання система переходить у режим Слідкування
+        self.learning.on_finished = lambda _names: threading.Thread(
+            target=self._after_learning, daemon=True).start()
 
     def camera(self, camera_id: int) -> CameraRecord:
         with self.control._db_lock:
@@ -76,7 +83,19 @@ class AppContext:
         self.control.reload()
         self.control.start()
 
+    def _after_learning(self) -> None:
+        if self.detection.active:
+            self.detection.stop()
+        self.detection.start()
+
+    def start_learning(self, names=None):
+        """Навчання: Слідкування на цей час вимикається (камери обертаються)."""
+        if self.detection.active:
+            self.detection.stop()
+        return self.learning.start(names)
+
     def shutdown(self) -> None:
+        self.detection.stop()
         self.learning.shutdown()
         self.video.shutdown()
         self.control.shutdown()

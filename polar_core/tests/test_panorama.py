@@ -85,3 +85,32 @@ def test_mask_save_restore(tmp_path):
     got.remove(got.rects()[0])
     save_mask(conn, 1, got)
     assert len(load_mask(conn, 1).items) == 1
+
+
+def test_reference_update_follows_lighting():
+    model = CameraModel(320, 180, 60.0, 34.0)
+    cam = SimCamera(make_scene(1800, 450, seed=2), resolution=(320, 180), model=model)
+    pano = Panorama(4.0)
+    img = cam.capture(100.0, 20.0)
+    pano.add_frame(img, model, 100.0, 20.0)
+    region = pano.covered()
+    before = pano.image[region].astype(float).mean()
+    brighter = np.clip(img.astype(int) + 40, 0, 255).astype(np.uint8)
+    excl = np.zeros(img.shape[:2], bool)
+    excl[80:100, 150:170] = True                                     # «обʼєкт» — не вносити в еталон
+    for _ in range(10):
+        pano.add_frame(brighter, model, 100.0, 20.0, alpha=0.3, exclude=excl)
+    after = pano.image[region].astype(float).mean()
+    assert after - before > 25                                        # еталон підтягнувся до освітлення
+    az, el = model.pixel_to_angles(160, 90, 100.0, 20.0)
+    px, py = int(pano.x_of(az)), int(pano.y_of(el))
+    assert abs(int(pano.image[py, px, 0]) - int(img[90, 160])) < 6      # під обʼєктом — без змін
+
+
+def test_plan_aligned_to_step():
+    from polar_core.learning import aligned_start, az_step
+    assert az_step(60.0) == 30.0 and az_step(47.0) == 22.5
+    s = aligned_start(37.0, 60.0)
+    plan = learning_plan(60.0, 40.0, az_start=s)
+    assert all(abs(((az + 37.0) % 360.0 + 1e-6) % 30.0) < 1e-5 for az, _ in plan)   # від півночі: 0, 30, 60 …
+    assert sorted({e for _, e in plan}) == [0.0, 20.0, 40.0, 60.0, 80.0]

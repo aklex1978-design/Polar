@@ -86,3 +86,66 @@ def test_manual_input_writes_frame(ctx):
     rec = cm.get_camera(ctx.conn, ctx.records()[0].id)
     assert Panorama.exists(rec.panorama_path)
     ctx.video.release("Камера 1")
+
+
+def test_snapshot_on_every_learning_step(tmp_path):
+    """Знімок на кожному кроці Навчання: крок — половина кута огляду (по азимуту HFOV/2, по куту місця
+    VFOV/2), азимут від півночі кратний кроку; без окремого проходу."""
+    path = str(tmp_path / "polar.sqlite")
+    conn = db.connect(path)
+    seed_demo(conn)
+    with conn:
+        conn.execute("UPDATE cameras SET fov_x_deg = 90, fov_y_deg = 60, stream_res_x = 640, stream_res_y = 480, "
+                     "north_offset_deg = 5")
+        conn.execute("UPDATE servo_settings SET max_speed_deg_s = 360")
+        conn.execute("DELETE FROM cameras WHERE name != 'Камера 1'")
+    c = fakes.bind(build_context(path, video_options=fakes.video_options(), ros_factory=no_ros))
+    c.learning.max_px_per_deg = 3.0
+    try:
+        assert wait(5, lambda: c.control.status("Камера 1").link_ok)
+        c.start_learning(["Камера 1"])
+        st = c.learning.wait("Камера 1", timeout=200)
+        assert st.state == "done", st.message
+        import json
+        idx = json.load(open(os.path.join(st.snapshots_dir, "index.json"), encoding="utf-8"))
+        snaps = idx["snapshots"]
+        assert idx["azimuth_step_deg"] == 45.0 and idx["elevations_deg"] == [0.0, 30.0, 60.0]
+        assert len(snaps) == st.steps == 8 * 3 and st.snapshots == 24       # знімок на кожному кроці
+        assert {v["azimuth_node"] for v in snaps.values()} == {i * 45.0 for i in range(8)}
+        v = snaps["30/090"]
+        assert abs(v["azimuth_deg"] - 90) <= 0.5 and abs(v["elevation_deg"] - 30) <= 0.5
+        assert os.path.isfile(os.path.join(st.snapshots_dir, v["file"]))
+        assert "знімків: 24" in st.message
+    finally:
+        c.shutdown()
+
+
+def test_step_and_save_current(ctx):
+    """«Робота / Камери»: крок камери по вузлах сітки Навчання і «Зберегти» — у панораму та знімки."""
+    name = "Камера 1"
+    assert wait(5, lambda: ctx.control.status(name).link_ok)
+    assert ctx.video.acquire(name)
+    rec = ctx.records()[0]
+    try:
+        assert wait(5, lambda: ctx.video.latest(name) is not None and ctx.video.latest(name).has_angles)
+        az, el = ctx.learning.step(name, 0, +1)
+        assert el > 0
+        az2, el2 = ctx.learning.step(name, +1, 0)
+        assert el2 == pytest.approx(el) and az2 % 45.0 == pytest.approx(0.0, abs=1e-6)   # HFOV 90 → крок 45°
+
+        def still():
+            sf = ctx.video.latest(name)
+            return sf is not None and sf.has_angles and not sf.angles.moving and \
+                abs(sf.angles.elevation_deg - el2) < 0.5
+        assert wait(10, still)
+        time.sleep(0.3)
+        cov, path = ctx.learning.save_current(name)
+        assert 0 < cov < 0.3 and os.path.isfile(path)
+        assert os.path.dirname(os.path.dirname(path)) == ctx.learning.screenshots_dir(rec)   # вузол el_XX/az_XXX
+        assert Panorama.exists(cm.get_camera(ctx.conn, rec.id).panorama_path)
+        found = ctx.learning.snapshot_for(name)                       # вікно «Знімок» — для цього положення
+        assert found[0] == path and found[1]["elevation_node"] == pytest.approx(el2, abs=0.01)
+        ctx.learning.step(name, 0, -1)
+        assert wait(10, lambda: ctx.learning.snapshot_for(name)[0] is None)   # інше положення — знімка немає
+    finally:
+        ctx.video.release(name)

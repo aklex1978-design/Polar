@@ -2,6 +2,7 @@
 
 У програмі режиму імітації відео немає — камери завжди показують справжній потік. Тут лише
 тестові «камери», щоб перевіряти привʼязку кадрів до кутів і вимірювання затримки без обладнання."""
+from polar_core.projection import CameraModel
 from polar_core.sim import SimCamera, SimVideoCapture, make_scene
 from polar_core.usb_cameras import UsbCamera, VideoMode
 
@@ -13,6 +14,7 @@ class FakeStreams:
 
     def __init__(self) -> None:
         self.vs = None
+        self.cams = {}
 
     def __call__(self, rec, password):
         def angles(t):
@@ -23,8 +25,10 @@ class FakeStreams:
             return None if hist is not None and len(hist) else (0.0, 20.0)
         w, h = rec.frame_size
         scale = min(1.0, 640 / w)
-        cam = SimCamera(make_scene(3600, 900, seed=(rec.id or 0) + 7),
-                        resolution=(int(w * scale), int(h * scale)), fov_deg=(rec.fov_x_deg, rec.fov_y_deg))
+        size = (int(w * scale), int(h * scale))
+        cam = SimCamera(make_scene(3600, 900, seed=(rec.id or 0) + 7), resolution=size,
+                        model=CameraModel(size[0], size[1], rec.fov_x_deg, rec.fov_y_deg))
+        self.cams[rec.name] = cam                # тест може додати в сцену ціль: fakes.cams[назва].targets
         return lambda: SimVideoCapture(cam, angles, fps=rec.fps, delay_s=VIDEO_DELAY_S)
 
 
