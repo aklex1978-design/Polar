@@ -50,6 +50,7 @@ class LearningService:
         self._threads: Dict[str, threading.Thread] = {}
         self._stop: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+        self.on_finished: Optional[Callable[[List[str]], None]] = None   # усі камери завершили Навчання
 
     # --- панорами ------------------------------------------------------------------------
     def panorama_dir(self) -> str:
@@ -203,6 +204,15 @@ class LearningService:
             ctl.set_learning(name, False)
             if acquired:
                 video.release(name)
+            self._notify_if_all_done()
+
+    def _notify_if_all_done(self) -> None:
+        with self._lock:
+            if any(s.state == RUNNING for s in self._status.values()):
+                return
+            done = [n for n, s in self._status.items() if s.state == DONE]
+        if done and self.on_finished:
+            self.on_finished(done)
 
     def _wait_frame(self, name, stop, timeout):
         end = self._clock() + timeout
@@ -233,6 +243,18 @@ class LearningService:
                 reached = None
             time.sleep(0.03)
         return None
+
+    def update_reference(self, name: str, image, model, sensor_az: float, el: float, exclude=None,
+                         alpha: float = 0.3) -> None:
+        """Оновлення еталона під час Слідкування (освітлення змінилось); файл перезаписується."""
+        pano = self.panorama(name)
+        if pano is None:
+            return
+        pano.add_frame(image, model, sensor_az, el, alpha=alpha, exclude=exclude)
+        self._bump(name)
+        rec = self._rec(name)
+        if rec is not None:
+            self._save(rec, pano)
 
     # --- ручне введення (калібрування) -------------------------------------------------------------
     def add_manual(self, name: str, image, sensor_az: float, el: float) -> float:

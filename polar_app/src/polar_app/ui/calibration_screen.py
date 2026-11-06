@@ -45,6 +45,8 @@ class CameraView(QWidget):
         self.landmark_mode = False
         self.landmarks: List[Tuple[float, float]] = []
         self.text_lines: List[str] = []
+        self.boxes: List[Tuple[float, float, float, float]] = []     # знайдені обʼєкти (u, v, w, h)
+        self.interactive = True
         self._drag = False
 
     # --- перетворення кадр ↔ віджет --------------------------------------------------
@@ -71,7 +73,7 @@ class CameraView(QWidget):
         return math.hypot(p.x() - c.x(), p.y() - c.y()) <= 18
 
     def mousePressEvent(self, e) -> None:  # noqa: N802
-        if e.button() != Qt.MouseButton.LeftButton or self.model is None:
+        if e.button() != Qt.MouseButton.LeftButton or self.model is None or not self.interactive:
             return
         p = e.position()
         if self.landmark_mode and not self._near_center(p):
@@ -81,6 +83,8 @@ class CameraView(QWidget):
         self._move_center(p)
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if not self.interactive:
+            return
         if self._drag:
             self._move_center(e.position())
         else:
@@ -146,6 +150,12 @@ class CameraView(QWidget):
         for u, v in self.landmarks:
             q = self.to_widget(u, v)
             p.drawEllipse(q, 6, 6)
+        # знайдені обʼєкти
+        p.setPen(QPen(QColor("#ff2d55"), 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for u, v, w, h in self.boxes:
+            a, b = self.to_widget(u - w / 2 - 3, v - h / 2 - 3), self.to_widget(u + w / 2 + 3, v + h / 2 + 3)
+            p.drawRect(QRectF(a, b))
         # центр камери — перехрестя
         p.setPen(QPen(CENTER_COLOR, 2))
         p.drawLine(QPointF(c.x() - 16, c.y()), QPointF(c.x() + 16, c.y()))

@@ -23,7 +23,8 @@ from polar_core import db  # noqa: E402
 
 path = os.path.join(tempfile.mkdtemp(), "demo.sqlite")
 seed_demo(db.connect(path))                       # сервоприводи камер — демо (у CI немає Raspberry Pi)
-ctx = fakes.bind(build_context(path, video_options=fakes.video_options()))
+opts = fakes.video_options()
+ctx = fakes.bind(build_context(path, video_options=opts))
 win = MainWindow(ctx)
 win.resize(1180, 1000)
 win.show()
@@ -72,8 +73,24 @@ win.grab().save(os.path.join(out_dir, "work.png"))
 end = time.monotonic() + 150
 while ctx.learning.is_running() and time.monotonic() < end:
     pump(0.5)
-ctx.control.go_to(rec0.name, 75.0, 25.0)
-pump(1.5)
+# після Навчання — Слідкування; ціль у кадрі першої камери → Виявлення
+end = time.monotonic() + 10
+while not ctx.detection.active and time.monotonic() < end:
+    pump(0.3)
+ctx.control.go_to(rec0.name, 75.0, 25.0, source="learning")
+pump(2.5)
+from polar_core.sim import SimTarget  # noqa: E402
+opts["open_factory"].cams[rec0.name].targets.append(SimTarget(83.0, 30.0, size_deg=1.5, brightness=0))
+pump(2.5)
+win.stack.setCurrentWidget(win.grid)
+pump(2.0)
+win.grab().save(os.path.join(out_dir, "grid.png"))
+win.stack.setCurrentWidget(win.work)
+pump(0.6)
+win.grab().save(os.path.join(out_dir, "work_detection.png"))
+opts["open_factory"].cams[rec0.name].targets.clear()
+ctx.detection.stop()
+pump(0.5)
 win.calibrate_camera(rec0.id)
 pump(2.0)
 win.calibration.zone_btn.setChecked(True)

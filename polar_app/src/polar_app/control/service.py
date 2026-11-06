@@ -25,7 +25,7 @@ class ControlService:
         self.conn = conn
         self.backend = backend
         self._clock = clock
-        self._db_lock = threading.Lock()
+        self._db_lock = threading.RLock()     # повторний вхід з того самого потоку — без взаємоблокування
         self._learning: Dict[str, bool] = {}
         self._was_online: Dict[str, bool] = {}
         self._pending_configure: Dict[str, Future] = {}

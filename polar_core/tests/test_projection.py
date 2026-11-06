@@ -125,3 +125,12 @@ def test_placement_error_on_landmark_below_criterion():
     assert angular_error((110.0, 32.0), naive.pixel_to_angles(*truth.angles_to_pixel(110.0, 32.0, 95.0, 40.0,
                                                                                  north=False)[:2], 95.0, 40.0,
                                                                north=False)) > 0.5
+
+
+def test_barrel_distortion_does_not_fold_back():
+    """Точка далеко поза кадром не «загортається» дисторсією назад у кадр."""
+    m = model(k1=-0.1)
+    _u, _v, ok = m.angles_to_pixel(72.0, 0.0, 0.0, 0.0, north=False)
+    assert not ok
+    _u, _v, ok = m.angles_to_pixel(25.0, 5.0, 0.0, 0.0, north=False)
+    assert ok

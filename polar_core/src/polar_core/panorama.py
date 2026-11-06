@@ -69,8 +69,13 @@ class Panorama:
         x1 = x0 + int(math.ceil((a1 - a0) * self.k))
         return x0, x1, max(0, y0), min(self.height, y1)
 
-    def add_frame(self, image: np.ndarray, model: CameraModel, sensor_az: float, el: float) -> int:
-        """Записати кадр, знятий при куті датчика sensor_az і куті місця el. Повертає кількість пікселів."""
+    def add_frame(self, image: np.ndarray, model: CameraModel, sensor_az: float, el: float,
+                  alpha: Optional[float] = None, exclude: Optional[np.ndarray] = None) -> int:
+        """Записати кадр, знятий при куті датчика sensor_az і куті місця el. Повертає кількість пікселів.
+
+        alpha=None — зважене середнє з усіма попередніми кадрами (Навчання);
+        alpha=0…1 — оновлення еталона: стара панорама плавно підтягується до нового кадру
+        (зміна освітлення), exclude — пікселі кадру, які не брати (знайдені обʼєкти)."""
         import cv2
 
         if image.ndim == 2:
@@ -95,13 +100,22 @@ class Panorama:
         # вага спадає до країв кадру: 1 у центрі, 0 на краю
         fw = np.minimum(np.minimum(u, w - 1 - u) / (w / 2), np.minimum(v, h - 1 - v) / (h / 2))
         fw = np.where(inside, np.clip(fw, 0.0, 1.0) + 1e-3, 0.0).astype(np.float32)
+        if exclude is not None:
+            ex = cv2.remap(exclude.astype(np.uint8), mu, mv, cv2.INTER_NEAREST, borderValue=0) > 0
+            fw = np.where(ex, 0.0, fw).astype(np.float32)
         cols = xs % self.width
         sub_w = self.weight[y0:y1][:, cols]
         sub_i = self.image[y0:y1][:, cols].astype(np.float32)
-        tot = sub_w + fw
-        blend = np.where(tot[..., None] > 0,
-                         (sub_i * sub_w[..., None] + patch.astype(np.float32) * fw[..., None])
-                         / np.maximum(tot, 1e-9)[..., None], sub_i)
+        if alpha is not None:
+            a = (alpha * np.minimum(fw * 4.0, 1.0))[..., None]      # біля країв кадру — слабше
+            blend = np.where(sub_w[..., None] > 0, sub_i * (1 - a) + patch.astype(np.float32) * a, sub_i)
+            tot = np.where((sub_w == 0) & (fw > 0), fw, sub_w)
+            blend = np.where(((sub_w == 0) & (fw > 0))[..., None], patch.astype(np.float32), blend)
+        else:
+            tot = sub_w + fw
+            blend = np.where(tot[..., None] > 0,
+                             (sub_i * sub_w[..., None] + patch.astype(np.float32) * fw[..., None])
+                             / np.maximum(tot, 1e-9)[..., None], sub_i)
         self.image[y0:y1, cols] = np.clip(blend + 0.5, 0, 255).astype(np.uint8)
         self.weight[y0:y1, cols] = tot
         return int(inside.sum())

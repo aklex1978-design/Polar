@@ -89,6 +89,20 @@ class CameraModel:
             y = (yd - dy) / radial
         return x, y
 
+    @property
+    def r2_max(self) -> float:
+        """Квадрат найбільшого радіуса (без дисторсії), що ще потрапляє в кадр, із запасом 5 %."""
+        key = (self.width, self.height, self.cx, self.cy, self.k1, self.k2, self.p1, self.p2, self.k3,
+               self.hfov_deg)
+        if getattr(self, "_r2_key", None) != key:
+            f = self.f
+            us = np.array([0, self.width, 0, self.width, self.cx, self.cx, 0, self.width], float)
+            vs = np.array([0, 0, self.height, self.height, 0, self.height, self.cy, self.cy], float)
+            x, y = self.undistort((us - self.cx) / f, (vs - self.cy) / f)
+            self._r2 = float(np.max(x * x + y * y)) * 1.05 ** 2
+            self._r2_key = key
+        return self._r2
+
     def _tilt(self, x, y, sign: float = 1.0):
         g = math.radians(self.tilt_deg) * sign
         c, s = math.cos(g), math.sin(g)
@@ -131,6 +145,10 @@ class CameraModel:
         ok = fwd > 1e-9
         safe = np.where(ok, fwd, 1.0)
         x, y = self._tilt(right / safe, down / safe, sign=-1.0)
+        if self.has_distortion:
+            # поліном дисторсії має сенс лише в межах кадру: далі бочкоподібна дисторсія «загортає»
+            # точки поза полем зору назад у кадр. Тож напрямки за межами кадру — невидимі.
+            ok = ok & (x * x + y * y <= self.r2_max)
         xd, yd = self.distort(x, y)
         u, v = self.cx + self.f * xd, self.cy + self.f * yd
         return _scalar(u), _scalar(v), _scalar(ok)

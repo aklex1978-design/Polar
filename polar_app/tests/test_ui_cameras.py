@@ -419,3 +419,20 @@ def test_work_screen_learning(win):
     assert wait(25, lambda: not win.ctx.learning.is_running())
     assert wait(3, lambda: "Очікування" in w.mode.text())
     assert win.ctx.learning.status("Камера 1").state == "stopped"
+
+
+def test_cameras_grid_and_tracking_button(win):
+    names = [r.name for r in win.ctx.records()]
+    win.stack.setCurrentWidget(win.grid)
+    g = win.grid
+    assert set(g.tiles) == set(names) and all(win.ctx.video.is_running(n) for n in names)
+    assert wait(6, lambda: all(t.view.pixmap is not None for t in g.tiles.values()))
+    assert not g.tiles[names[0]].view.interactive
+    win.ctx.control.backend.sim.set_online(names[2], False)
+    assert wait(5, lambda: any("Кут місця" in line for line in g.tiles[names[0]].view.text_lines))
+    win.show_cameras()
+    assert not any(win.ctx.video.is_running(n) for n in names)        # вихід — потоки відключено
+    win.stack.setCurrentWidget(win.work)
+    win.work.track_btn.click()
+    assert "Немає жодної панорами" in win.work.message.text()
+    assert not win.ctx.detection.active

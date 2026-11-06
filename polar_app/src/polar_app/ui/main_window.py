@@ -10,6 +10,7 @@ from .camera_form import CameraForm
 from .cameras_screen import CamerasScreen
 from .control_screen import ControlScreen
 from .work_screen import WorkScreen
+from .cameras_grid import CamerasGridScreen
 
 
 class MainWindow(QMainWindow):
@@ -25,7 +26,8 @@ class MainWindow(QMainWindow):
         self.control = ControlScreen(ctx.control, ctx)
         self.calibration = CalibrationScreen(ctx)
         self.work = WorkScreen(ctx)
-        for page in (self.cameras, self.form, self.control, self.calibration, self.work):
+        self.grid = CamerasGridScreen(ctx)
+        for page in (self.cameras, self.form, self.control, self.calibration, self.work, self.grid):
             self.stack.addWidget(page)
 
         self.cameras.edit_requested.connect(self.edit_camera)
@@ -45,9 +47,10 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             menu.addAction(act)
         work = self.menuBar().addMenu("Робота")
-        act = QAction("Режим роботи", self)
-        act.triggered.connect(lambda: self.stack.setCurrentWidget(self.work))
-        work.addAction(act)
+        for text, page in (("Камери", self.grid), ("Режим роботи", self.work)):
+            act = QAction(text, self)
+            act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))
+            work.addAction(act)
         self.show_cameras()
         self.resize(1180, 860)
 
@@ -58,6 +61,10 @@ class MainWindow(QMainWindow):
             self.form.leave()
         if self._page is self.calibration and new is not self.calibration:
             self.calibration.leave()
+        if self._page is self.grid and new is not self.grid:
+            self.grid.leave()
+        if new is self.grid and self._page is not self.grid:
+            self.grid.enter()
         if self._page is self.control and new is not self.control:
             self.control.leave()
         if new is self.control and self._page is not self.control:
@@ -83,6 +90,8 @@ class MainWindow(QMainWindow):
         self.calibration.leave()
         self.calibration.timer.stop()
         self.work.timer.stop()
+        self.grid.leave()
+        self.grid.timer.stop()
         self.control.timer.stop()
         self.form.timer.stop()
         self.ctx.shutdown()
