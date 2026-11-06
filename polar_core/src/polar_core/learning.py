@@ -6,10 +6,11 @@ import math
 from typing import List, Tuple
 
 
-def learning_plan(hfov_deg: float, vfov_deg: float, el_min: float = 0.0, el_max: float = 90.0
-                  ) -> List[Tuple[float, float]]:
+def learning_plan(hfov_deg: float, vfov_deg: float, el_min: float = 0.0, el_max: float = 90.0,
+                  az_start: float = 0.0) -> List[Tuple[float, float]]:
     """Положення камери (кут датчика, кут місця) у порядку обходу. Ряди — змійкою, щоб камера не
-    поверталась через усе коло на початок кожного ряду."""
+    поверталась через усе коло на початок кожного ряду. az_start — зсув кроків по азимуту (напр. щоб
+    азимути від півночі припадали на кратні 10°)."""
     az_step = hfov_deg / 2.0
     el_step = vfov_deg / 2.0
     n_az = max(1, int(math.ceil(360.0 / az_step - 1e-9)))
@@ -22,8 +23,15 @@ def learning_plan(hfov_deg: float, vfov_deg: float, el_min: float = 0.0, el_max:
         e += el_step
     plan = []
     for row, el in enumerate(els):
-        azs = [i * 360.0 / n_az for i in range(n_az)]
+        azs = [(az_start + i * 360.0 / n_az) % 360.0 for i in range(n_az)]
         if row % 2:
             azs.reverse()
         plan.extend((az, el) for az in azs)
     return plan
+
+
+def aligned_start(north_offset_deg: float, hfov_deg: float, grid_deg: float = 10.0) -> float:
+    """Зсув плану, за якого кроки по азимуту від півночі кратні grid_deg (якщо крок HFOV/2 це дозволяє)."""
+    step = 360.0 / max(1, int(math.ceil(360.0 / (hfov_deg / 2.0) - 1e-9)))
+    unit = grid_deg if abs(step / grid_deg - round(step / grid_deg)) < 1e-6 else step
+    return (-north_offset_deg) % unit

@@ -15,8 +15,10 @@ from typing import Callable, Dict, List, Optional
 from polar_core import calibration as cal
 from polar_core import cameras as cm
 from polar_core.angles import wrap180, wrap360
-from polar_core.learning import learning_plan
+from polar_core.learning import aligned_start, learning_plan
 from polar_core.panorama import DEFAULT_MAX_PX_PER_DEG, Panorama
+
+from .screenshots import GridSnapshots
 
 IDLE, RUNNING, DONE, STOPPED, ERROR = "idle", "running", "done", "stopped", "error"
 STATE_TEXT = {IDLE: "очікує", RUNNING: "навчається", DONE: "завершено", STOPPED: "зупинено", ERROR: "помилка"}
@@ -30,6 +32,8 @@ class LearningStatus:
     coverage: float = 0.0
     message: str = ""
     skipped: List[int] = field(default_factory=list)
+    snapshots: int = 0                  # знімків на кутах, кратних 10°
+    snapshots_dir: str = ""
 
     @property
     def text(self) -> str:
@@ -50,6 +54,7 @@ class LearningService:
         self._threads: Dict[str, threading.Thread] = {}
         self._stop: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
+        self._snaps: Dict[str, GridSnapshots] = {}
         self.on_finished: Optional[Callable[[List[str]], None]] = None   # усі камери завершили Навчання
 
     # --- панорами ------------------------------------------------------------------------
@@ -60,6 +65,9 @@ class LearningService:
         if row and row[0]:
             return row[0]
         return os.path.join(os.path.dirname(os.path.abspath(dbfile)) if dbfile else os.getcwd(), "panoramas")
+
+    def screenshots_dir(self, rec) -> str:
+        return os.path.join(self.panorama_dir(), "screenshots", f"camera_{rec.id}")
 
     def panorama_path(self, rec) -> str:
         return rec.panorama_path or os.path.join(self.panorama_dir(), f"camera_{rec.id}.png")
@@ -169,7 +177,13 @@ class LearningService:
             # якщо він менший за VFOV з параметрів, крок за кутом місця береться з нього — без пропусків
             import math
             vfov_eff = math.degrees(2 * math.atan(size[1] / 2 / model.f))
-            plan = learning_plan(rec.fov_x_deg, min(rec.fov_y_deg, vfov_eff), el_lo, el_hi)
+            # кроки по азимуту від півночі — кратні 10° (для знімків на кутах, кратних 10°)
+            plan = learning_plan(rec.fov_x_deg, min(rec.fov_y_deg, vfov_eff), el_lo, el_hi,
+                                 az_start=aligned_start(rec.north_offset_deg, rec.fov_x_deg))
+            snaps = GridSnapshots(self.screenshots_dir(rec), rec.north_offset_deg)
+            snaps.reset()
+            self._snaps[name] = snaps
+            st.snapshots_dir = snaps.directory
             pano = Panorama.for_camera(size[0], rec.fov_x_deg, self.max_px_per_deg)
             with self._lock:
                 self._pano[name] = pano
@@ -180,18 +194,21 @@ class LearningService:
                     break
                 st.step, st.message = i + 1, f"крок {i + 1} з {len(plan)}: датчик {az:.0f}°, кут місця {el:.0f}°"
                 ctl.go_to(name, wrap360(az + rec.north_offset_deg), el, 0.0, source="learning")
-                sf = self._wait_still_frame(name, az, el, stop)
+                sf = self._wait_still_frame(name, az, el, stop, snaps)
                 if sf is None:
                     if stop.is_set() or not ctl.is_learning(name):
                         continue                         # зупинку обробить початок циклу
                     st.skipped.append(i)                     # не дійшла за тайм-аут — крок пропущено
                     continue
                 pano.add_frame(sf.image, model, sf.angles.azimuth_deg, sf.angles.elevation_deg)
+                snaps.offer(sf)
+                st.snapshots = snaps.count
                 st.coverage = pano.coverage()
                 self._bump(name)
             else:
                 st.state = DONE
-                st.message = (f"панорама готова, покриття {st.coverage * 100:.1f} %"
+                st.message = (f"панорама готова, покриття {st.coverage * 100:.1f} %; знімків на кутах, кратних 10°: "
+                              f"{st.snapshots}"
                               + (f"; пропущено кроків: {len(st.skipped)}" if st.skipped else ""))
             if pano.coverage() > 0:
                 path = self._save(rec, pano)
@@ -223,12 +240,14 @@ class LearningService:
             time.sleep(0.05)
         return None
 
-    def _wait_still_frame(self, name, az, el, stop):
-        """Кадр, знятий після того, як камера зупинилась біля цілі."""
+    def _wait_still_frame(self, name, az, el, stop, snaps: Optional[GridSnapshots] = None):
+        """Кадр, знятий після того, як камера зупинилась біля цілі. Дорогою — знімки на вузлах 10°."""
         ctl, video = self.ctx.control, self.ctx.video
         end = self._clock() + self.move_timeout_s
         reached = None
         while self._clock() < end and not stop.is_set() and ctl.is_learning(name):
+            if snaps is not None and snaps.offer(video.latest(name)):
+                self._status[name].snapshots = snaps.count
             snap = ctl.backend.snapshot(name)
             if snap is not None and not snap.moving and abs(wrap180(snap.azimuth_deg - az)) < 1.0 \
                     and abs(snap.elevation_deg - el) < 1.0:

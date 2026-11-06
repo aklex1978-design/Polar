@@ -105,3 +105,12 @@ def test_reference_update_follows_lighting():
     az, el = model.pixel_to_angles(160, 90, 100.0, 20.0)
     px, py = int(pano.x_of(az)), int(pano.y_of(el))
     assert abs(int(pano.image[py, px, 0]) - int(img[90, 160])) < 6      # під обʼєктом — без змін
+
+
+def test_plan_aligned_to_10_degrees():
+    from polar_core.learning import aligned_start
+    s = aligned_start(37.0, 60.0)                       # крок 30° → кратний 10°: зсув лише в межах 10°
+    plan = learning_plan(60.0, 40.0, az_start=s)
+    assert all(round((az + 37.0) % 360.0, 6) % 10 == 0 for az, _ in plan)
+    assert sorted({e for _, e in plan}) == [0.0, 20.0, 40.0, 60.0, 80.0]
+    assert aligned_start(0.0, 90.0) == 0.0              # крок 45° не кратний 10° — без зсуву

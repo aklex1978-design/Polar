@@ -86,3 +86,35 @@ def test_manual_input_writes_frame(ctx):
     rec = cm.get_camera(ctx.conn, ctx.records()[0].id)
     assert Panorama.exists(rec.panorama_path)
     ctx.video.release("Камера 1")
+
+
+def test_snapshots_on_10_degree_nodes(tmp_path):
+    """Знімки на кутах, кратних 10° (кут місця 10…80°), — паралельно з Навчанням, без окремого проходу."""
+    path = str(tmp_path / "polar.sqlite")
+    conn = db.connect(path)
+    seed_demo(conn)
+    with conn:   # кадр 4:3 і VFOV 40° → ряди 0, 20, 40, 60, 80°; крок по азимуту 30°
+        conn.execute("UPDATE cameras SET fov_x_deg = 60, fov_y_deg = 40, stream_res_x = 640, stream_res_y = 480, "
+                     "north_offset_deg = 5")
+        conn.execute("UPDATE servo_settings SET max_speed_deg_s = 360")
+        conn.execute("DELETE FROM cameras WHERE name != 'Камера 1'")
+    c = fakes.bind(build_context(path, video_options=fakes.video_options(), ros_factory=no_ros))
+    c.learning.max_px_per_deg = 3.0
+    try:
+        assert wait(5, lambda: c.control.status("Камера 1").link_ok)
+        c.start_learning(["Камера 1"])
+        st = c.learning.wait("Камера 1", timeout=200)
+        assert st.state == "done", st.message
+        import json
+        idx = json.load(open(os.path.join(st.snapshots_dir, "index.json"), encoding="utf-8"))
+        still = [k for k, v in idx.items() if not v["moving"]]
+        # кожен крок плану на кутах місця 20/40/60/80 — вузол сітки: азимути від півночі 10, 40, 70 … (кратні 10°)
+        assert len(still) >= 4 * 12, len(still)
+        assert {int(k.split("/")[0]) for k in still} == {20, 40, 60, 80}
+        assert all(int(k.split("/")[1]) % 10 == 0 for k in still)
+        v = idx["40/100"]
+        assert abs(v["azimuth_deg"] - 100) <= 0.5 and abs(v["elevation_deg"] - 40) <= 0.5
+        assert os.path.isfile(os.path.join(st.snapshots_dir, v["file"]))
+        assert "знімків" in st.message
+    finally:
+        c.shutdown()
