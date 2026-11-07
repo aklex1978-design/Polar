@@ -150,7 +150,7 @@ class MapSettingsScreen(QWidget):
         v.addWidget(self.message)
 
         self._loading = False
-        self._seen_version = -1
+        self._seen_version = self.maps.version          # завершення, яких екран ще не показав
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
         self.timer.start(200)
@@ -261,15 +261,13 @@ class MapSettingsScreen(QWidget):
             self.load_btn.setEnabled(False)
             self.progress.setValue(int(st.fraction * 1000))
             self.message.setText(f"Будуються рівні карти: {st.fraction * 100:.0f} % — {st.text}")
-        if self.maps.version != self._seen_version:
-            first = self._seen_version == -1
+        if self.maps.version != self._seen_version and not st.running:
             self._seen_version = self.maps.version
-            if not first:
-                if st.error:
-                    self.message.setText(f"Помилка: {st.error}")
-                    self.message.setStyleSheet(f"color: {BAD}")
-                else:
-                    self.message.setText(st.text.capitalize() + ".")
-                    self.message.setStyleSheet(f"color: {GOOD}" if st.done else "")
-                self._show_levels()
-                self._changed(save=False)
+            if st.error:
+                self.message.setText(f"Помилка: {st.error}")
+                self.message.setStyleSheet(f"color: {BAD}")
+            else:
+                self.message.setText(st.text[:1].upper() + st.text[1:] + ".")
+                self.message.setStyleSheet(f"color: {GOOD}" if st.done else "")
+            self._show_levels()
+            self._changed(save=False)

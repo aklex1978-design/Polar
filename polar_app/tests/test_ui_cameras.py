@@ -571,7 +571,8 @@ def test_map_settings_load_and_view(win, tmp_path):
     assert "збільшення рівня 3" in m.table.item(5, 3).text()
     assert "МБ" in m.info.text() and m.load_btn.isEnabled()
     m.load_btn.click()
-    assert wait(30, lambda: not win.ctx.maps.status.running and "завантажено" in m.message.text().lower())
+    ok = wait(30, lambda: not win.ctx.maps.status.running and "завантажено" in m.message.text().lower())
+    assert ok, (m.message.text(), win.ctx.maps.status)
     assert [lv.state for lv in m.view.levels][:3] == ["file", "downsampled", "file"]
     assert m.view.attribution == "© OpenStreetMap contributors"
     # пікселі карти: рівень 1 — зелений оглядовий, рівень 3 біля камери — пурпурний детальний
