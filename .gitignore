@@ -13,3 +13,7 @@ ros2_ws/log/
 *.db
 .idea/
 .vscode/
+*.sqlite-shm
+*.sqlite-wal
+*.key
+panoramas/
