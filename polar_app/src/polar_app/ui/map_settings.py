@@ -133,6 +133,12 @@ class MapSettingsScreen(QWidget):
             ed.setText(s.level_files.get(lvl, ""))
         self.osm.setChecked(s.osm)
         self._loading = False
+        # рівні, для яких файл задано, а карти ще немає (напр. після оновлення програми), — завантажити
+        loaded = {lv.level for lv in self.maps.levels()}
+        for lvl, path in s.level_files.items():
+            st = self.maps.status[lvl]
+            if lvl not in loaded and not (st.running or st.queued or st.error) and os.path.isfile(path):
+                self.maps.load_level(lvl, path)
         self.center()
         self._show_levels()
         self._refresh_table()

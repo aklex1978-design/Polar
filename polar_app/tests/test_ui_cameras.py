@@ -590,6 +590,13 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     wait(0.1)
     pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
     assert 0 < pt.x() < 600 and _px(m.view, pt.x(), pt.y()) == (40, 160, 40)
+    # файл задано, а карти немає (після оновлення програми) — при вході на екран рівень завантажується сам
+    with win.ctx.control._db_lock:
+        from polar_core import maps as mp
+        mp.delete_level(win.ctx.conn, 4)
+    win.stack.setCurrentWidget(win.work)
+    win.stack.setCurrentWidget(m)
+    assert wait(30, lambda: not win.ctx.maps.busy() and 4 in {lv.level for lv in win.ctx.maps.levels()})
     # прибрати рівень
     m.remove(1)
     assert [lv.level for lv in m.view.levels] == [4] and m.level_edits[1].text() == ""
