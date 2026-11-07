@@ -578,11 +578,19 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     m.view.set_index(1)
     wait(0.2)
     assert "detail.tif" in m.toolbar.label.text() and not m.toolbar.plus.isEnabled()
+    assert "Рівень 1 (найбільша деталізація)" in m.toolbar.label.text()
+    assert m.table.item(0, 0).text().startswith("1 — найбільша") and m.table.item(7, 0).text().startswith("8 — найменша")
     pt = m.view.to_screen(rec.latitude, rec.longitude)
     assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)       # детальна карта
     m.toolbar.minus.click()
     wait(0.1)
     assert "over.tif" in m.toolbar.label.text() and not m.toolbar.minus.isEnabled()
+    assert "уся карта" in m.toolbar.label.text()
+    a, b, c, d = m.view.current.bounds                                     # найменш детальний — уся карта у вигляді
+    for x, y in ((a, b), (c, d)):
+        sx = m.view.width() / 2 + (x - m.view.cx) / m.view.res
+        sy = m.view.height() / 2 - (y - m.view.cy) / m.view.res
+        assert -1 <= sx <= m.view.width() + 1 and -1 <= sy <= m.view.height() + 1
     pt = m.view.to_screen(rec.latitude, rec.longitude)
     assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)        # оглядова карта
     # на детальному рівні поза детальною картою видно оглядову
@@ -600,6 +608,36 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     # прибрати рівень
     m.remove(1)
     assert [lv.level for lv in m.view.levels] == [4] and m.level_edits[1].text() == ""
+
+
+def test_whole_map_on_least_detailed_level(app):
+    """Рівень 8 (найменш детальний): велика карта вписується у вигляд цілком; «+» — назад до камер."""
+    from polar_app.ui.map_view import MapView
+    from polar_core import maps as mp
+    v = MapView()
+    v.resize(500, 350)
+    big = mp.MapLevel(8, 300.0, 2.0e6, 7.0e6, 5000, 3500, "Ukraine.tiff", "")   # 1500 × 1050 км
+    small = mp.MapLevel(1, 2.0, 3.2e6, 6.5e6, 800, 600, "Вереси1.tiff", "")
+    cam = mp.merc_to_lonlat(3.2e6 + 800, 6.5e6 - 600)
+    v.center_on(cam[1], cam[0])
+    v.set_levels([small, big])
+    assert [lv.level for lv in v.levels] == [8, 1] and v.current.level == 1
+    v.zoom_out()
+    assert v.current.level == 8 and v.whole
+    assert v.res == pytest.approx(max(300.0 * 5000 / 500, 300.0 * 3500 / 350) * 1.03)
+    assert (v.cx, v.cy) == pytest.approx((2.0e6 + 750000, 7.0e6 - 525000))       # середина карти
+    v.zoom_in()
+    assert v.current.level == 1 and (v.cx, v.cy) == pytest.approx(mp.lonlat_to_merc(cam[0], cam[1]))
+
+
+def test_level_order_warning():
+    from polar_app.ui.map_settings import order_warnings
+    from polar_core import maps as mp
+    fine = mp.MapLevel(2, 2.0, 0, 0, 10, 10, "a", "")
+    coarse = mp.MapLevel(5, 50.0, 0, 0, 10, 10, "b", "")
+    assert order_warnings([fine, coarse]) == {}
+    bad = order_warnings([mp.MapLevel(2, 50.0, 0, 0, 10, 10, "b", ""), mp.MapLevel(5, 2.0, 0, 0, 10, 10, "a", "")])
+    assert 2 in bad and "менш детальна, ніж рівень 5" in bad[2]
 
 
 def test_work_map_camera_triangles(win, tmp_path):

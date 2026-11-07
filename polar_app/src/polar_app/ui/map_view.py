@@ -1,8 +1,9 @@
 """Віджет карти: на кожному кроці зуму — карта свого рівня у власному масштабі файлу.
 
-«+» / «−» і колесо перемикають завантажені рівні від оглядового до найдетальнішого (за роздільною
-здатністю). Під картою поточного рівня малюються дрібніші рівні — там, де карти поточного рівня немає,
-видно збільшену дрібнішу. Без завантажених карт — сітка на сірому тлі, камери в своїх координатах.
+Рівень 1 — найбільша деталізація, рівень 8 — найменша. «+» (і колесо від себе) веде до рівня 1,
+«−» — до рівня 8. Найменш детальний із завантажених рівнів показується цілком: карта вписується у
+вигляд, центр — середина карти. Під картою поточного рівня малюються менш детальні рівні — там, де
+карти поточного рівня немає, видно збільшену менш детальну. Без карт — сітка на сірому тлі.
 """
 from __future__ import annotations
 
@@ -29,11 +30,12 @@ class MapView(QWidget):
         super().__init__(parent)
         self.setMinimumSize(420, 300)
         self.setMouseTracking(True)
-        self.levels: List[mp.MapLevel] = []         # від оглядового (більший крок) до детального
+        self.levels: List[mp.MapLevel] = []         # від рівня 8 (найменш детальний) до рівня 1
         self.step = 0
         self._empty_step = 4
         self.cx, self.cy = mp.lonlat_to_merc(30.52, 50.45)      # центр вигляду, EPSG:3857
         self._drag: Optional[QPointF] = None
+        self._saved_center: Optional[Tuple[float, float]] = None   # центр до переходу на весь рівень 8
         self._cache: "OrderedDict[str, Optional[QImage]]" = OrderedDict()
         self.overlays: List[Callable[[QPainter, "MapView"], None]] = []
         self.attribution = ""
@@ -41,7 +43,7 @@ class MapView(QWidget):
     # --- дані -------------------------------------------------------------------------------------------
     def set_levels(self, levels: List[mp.MapLevel]) -> None:
         current = self.current
-        self.levels = sorted(levels, key=lambda lv: -lv.res)
+        self.levels = sorted(levels, key=lambda lv: -lv.level)
         self._cache.clear()
         self.attribution = next((lv.attribution for lv in self.levels if lv.attribution), "")
         if self.levels:
@@ -49,6 +51,8 @@ class MapView(QWidget):
                 self.step = next(i for i, lv in enumerate(self.levels) if lv.level == current.level)
             else:
                 self.step = self._best_step()
+            if self.step == 0:
+                self._enter_whole()
         self.level_changed.emit(self.step)
         self.update()
 
@@ -62,7 +66,21 @@ class MapView(QWidget):
 
     def center_on(self, lat: float, lon: float) -> None:
         self.cx, self.cy = mp.lonlat_to_merc(lon, lat)
+        if self.whole:
+            self._saved_center = (self.cx, self.cy)
+            self._enter_whole()
         self.update()
+
+    @property
+    def whole(self) -> bool:
+        """Поточний рівень — найменш детальний: показується вся карта."""
+        return bool(self.levels) and self.step == 0
+
+    def _enter_whole(self) -> None:
+        a, b, c, d = self.levels[0].bounds
+        if self._saved_center is None:
+            self._saved_center = (self.cx, self.cy)
+        self.cx, self.cy = (a + c) / 2, (b + d) / 2
 
     @property
     def current(self) -> Optional[mp.MapLevel]:
@@ -79,13 +97,24 @@ class MapView(QWidget):
     @property
     def res(self) -> float:
         cur = self.current
-        return cur.res if cur else EMPTY_STEPS[self._empty_step]
+        if cur is None:
+            return EMPTY_STEPS[self._empty_step]
+        if self.whole and self.width() > 0 and self.height() > 0:
+            a, b, c, d = cur.bounds                 # уся карта рівня 8 — у вигляді (з полями 3 %)
+            return max(cur.res, (c - a) / self.width() * 1.03, (d - b) / self.height() * 1.03)
+        return cur.res
 
     def set_index(self, i: int) -> None:
         i = max(0, min(self.steps - 1, i))
         if i != self.index:
             if self.levels:
+                was_whole = self.whole
                 self.step = i
+                if self.whole:
+                    self._enter_whole()
+                elif was_whole and self._saved_center is not None:
+                    self.cx, self.cy = self._saved_center      # назад туди, де дивились до рівня 8
+                    self._saved_center = None
             else:
                 self._empty_step = i
             self.level_changed.emit(i)
@@ -108,8 +137,10 @@ class MapView(QWidget):
         cur = self.current
         if cur is None:
             return f"Карт немає · масштаб {self.index + 1} з {self.steps}"
-        return (f"Рівень {cur.level} · {os.path.basename(cur.source_file)} · {cur.ground_res():.2f} м/піксель "
-                f"({self.index + 1} з {self.steps})")
+        kind = ("найбільша деталізація" if self.index == self.steps - 1 else
+                "найменша деталізація, уся карта" if self.whole else "")
+        return (f"Рівень {cur.level}{f' ({kind})' if kind else ''} · {os.path.basename(cur.source_file)} · "
+                f"{cur.ground_res():.2f} м/піксель")
 
     # --- координати ------------------------------------------------------------------------------------------
     def to_screen(self, lat: float, lon: float) -> QPointF:
@@ -144,9 +175,13 @@ class MapView(QWidget):
             p = e.position()                     # точка під курсором лишається на місці
             r0 = self.res
             mx, my = self.cx + (p.x() - self.width() / 2) * r0, self.cy - (p.y() - self.height() / 2) * r0
+            was_whole = self.whole
             self.set_index(self.index + (1 if steps > 0 else -1))
-            r1 = self.res
-            self.cx, self.cy = mx - (p.x() - self.width() / 2) * r1, my + (p.y() - self.height() / 2) * r1
+            if not self.whole and not was_whole:
+                r1 = self.res
+                self.cx, self.cy = mx - (p.x() - self.width() / 2) * r1, my + (p.y() - self.height() / 2) * r1
+            elif was_whole and not self.whole:
+                self.cx, self.cy = mx, my               # з усієї карти — до місця під курсором
             self.update()
 
     # --- тайли ---------------------------------------------------------------------------------------------------
@@ -194,7 +229,7 @@ class MapView(QWidget):
         p.fillRect(self.rect(), QColor("#d9d9d4"))
         drawn = 0
         if self.levels:
-            # спершу дрібніші рівні (запас там, де карти поточного немає), зверху — поточний
+            # спершу менш детальні рівні (запас там, де карти поточного немає), зверху — поточний
             for lv in self.levels[: self.step + 1]:
                 drawn += self._draw_level(p, lv)
         if not drawn:                                  # немає карти у вигляді — сітка 1 км

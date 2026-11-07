@@ -1,7 +1,7 @@
 """«Налаштування / Карта»: карта з камерами і таблиця рівнів 1–8 — на кожному рівні своя карта.
 
-Вибір файлу для рівня одразу завантажує карту цього рівня (хід — у колонці «Стан»). Зум «+» / «−»
-перемикає завантажені рівні від оглядового до найдетальнішого.
+Рівень 1 — найбільша деталізація, рівень 8 — найменша (показується вся карта). Вибір файлу для
+рівня одразу завантажує карту цього рівня (хід — у колонці «Стан»). «+» веде до рівня 1, «−» — до 8.
 """
 from __future__ import annotations
 
@@ -18,6 +18,19 @@ from .common import BAD, WARN
 from .map_view import MapView, draw_camera_points
 
 FILTER = "GeoTIFF (*.tif *.tiff);;Усі файли (*)"
+
+
+def order_warnings(levels):
+    """Рівень з меншим номером має бути детальнішим: попередження, якщо карта рівня менш детальна,
+    ніж карта рівня з більшим номером."""
+    out = {}
+    by = sorted(levels, key=lambda lv: lv.level)
+    for i, lv in enumerate(by):
+        coarser_num = [o for o in by[i + 1:] if o.res < lv.res * 0.999]
+        if coarser_num:
+            out[lv.level] = (f"менш детальна, ніж рівень {coarser_num[0].level} — рівень 1 має бути "
+                             f"найдетальнішим, рівень 8 — найменш детальним")
+    return out
 
 
 class MapToolbar(QWidget):
@@ -68,9 +81,9 @@ class MapSettingsScreen(QWidget):
 
         box = QGroupBox("Рівні карти")
         bl = QVBoxLayout(box)
-        hint = QLabel("На кожному рівні — своя карта GeoTIFF (EPSG:3857 або широта/довгота). Після вибору "
-                      "файлу карта рівня завантажується одразу; зум перемикає рівні від оглядового до "
-                      "найдетальнішого.")
+        hint = QLabel("На кожному рівні — своя карта GeoTIFF (EPSG:3857 або широта/довгота). Рівень 1 — "
+                      "найбільша деталізація, рівень 8 — найменша (на ньому показується вся карта). Після "
+                      "вибору файлу карта рівня завантажується одразу; «+» веде до рівня 1, «−» — до рівня 8.")
         hint.setWordWrap(True)
         bl.addWidget(hint)
         self.table = QTableWidget(mp.LEVELS, 4)
@@ -85,7 +98,8 @@ class MapSettingsScreen(QWidget):
         self.cancel_btns = {}
         for i in range(mp.LEVELS):
             lvl = i + 1
-            self.table.setItem(i, 0, QTableWidgetItem(str(lvl)))
+            label = {1: "1 — найбільша деталізація", mp.LEVELS: f"{mp.LEVELS} — найменша деталізація"}.get(lvl, str(lvl))
+            self.table.setItem(i, 0, QTableWidgetItem(label))
             ed = QLineEdit()
             ed.setPlaceholderText("— немає карти")
             ed.editingFinished.connect(lambda n=lvl: self._edited(n))
@@ -202,6 +216,7 @@ class MapSettingsScreen(QWidget):
     # --- стан -------------------------------------------------------------------------------------------------
     def _refresh_table(self) -> None:
         levels = {lv.level: lv for lv in self.maps.levels()}
+        order = order_warnings(list(levels.values()))
         for lvl in range(1, mp.LEVELS + 1):
             st = self.maps.status[lvl]
             lv = levels.get(lvl)
@@ -216,8 +231,8 @@ class MapSettingsScreen(QWidget):
             elif lv is not None:
                 text = (f"{lv.width} × {lv.height} пікс., {lv.ground_res():.2f} м/піксель "
                         f"(зум ≈ {lv.zoom:.1f})")
-                if lv.warning:
-                    text += f" — {lv.warning}"
+                for w in filter(None, (lv.warning, order.get(lvl))):
+                    text += f" — {w}"
                     color = WARN
             else:
                 text = st.text if st.text else ""
