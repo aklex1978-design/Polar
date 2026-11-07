@@ -20,6 +20,8 @@ from polar_core.detection import (DETECTION, IDLE, MODE_TEXT, TRACKING, Detectio
 from polar_core.mask import load_mask
 from polar_core.sync import LatencyMonitor
 
+from .target_service import TargetService
+
 
 @dataclass
 class CameraDetection:
@@ -48,6 +50,7 @@ class DetectionService:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._acquired: List[str] = []
+        self.targets = TargetService(ctx, clock)       # координати цілей з обʼєктів усіх камер
 
     # --- керування ---------------------------------------------------------------------
     @property
@@ -78,6 +81,7 @@ class DetectionService:
             self._threads[rec.name] = t
             names.append(rec.name)
         if names:
+            self.targets.start(self.ctx.records(), self.settings)
             self.mode.start_tracking()
             self._log(None, "mode", "Слідкування: " + ", ".join(names))
             for t in self._threads.values():
@@ -89,6 +93,7 @@ class DetectionService:
         for t in list(self._threads.values()):
             t.join(5)
         self._threads.clear()
+        self.targets.stop()
         for name in self._acquired:
             self.ctx.video.release(name)
         self._acquired.clear()
@@ -128,6 +133,7 @@ class DetectionService:
             if sf.angles.moving:
                 last_move = sf.t
             if sf.t - last_move < self.SETTLE_S:
+                self.targets.clear(name)
                 with self._lock:
                     cam.state = "камера рухається"
                     cam.result = None
@@ -150,6 +156,10 @@ class DetectionService:
                              moving=sf.angles.moving, pano_key=(id(pano), ver))
             now = self._clock()
             pairs, new = tracker.update(res.objects, sf.t) if res.compared else ([], [])
+            if res.compared:
+                self.targets.offer(rec, pairs, sf.t)
+            else:
+                self.targets.clear(name)
             with self._lock:
                 cam.result, cam.frame_index, cam.frame_t = res, sf.index, sf.t
                 cam.tracks = list(tracker.tracks)
