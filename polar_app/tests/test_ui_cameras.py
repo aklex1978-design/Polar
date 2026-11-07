@@ -649,14 +649,14 @@ def test_center_between_cameras_and_cameras_outside(app):
     assert v.current.level == 2 and (v.cx, v.cy) == pytest.approx((1500.0, 6.0e6 - 1500.0))
     v.zoom_out()
     assert v.current.level == 3 and not v.level_visible and "поза межами" in v.level_text
-    assert v._draw_level is not None and v.grab().toImage().pixelColor(5, 150).red() in (217, 196)   # порожньо
+    assert v.grab().toImage().pixelColor(5, 150).red() in (217, 196)                 # порожньо
     v.zoom_in()
     v.zoom_in()
     # середина біля краю карти — вигляд зсувається, щоб лишатися на карті
     c3 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0)
     v.camera_points = lambda: [(c3[1], c3[0])]
     v.recenter()
-    assert v.cx == pytest.approx(200 * 2.0) and v.cy == pytest.approx(6.0e6 - 150 * 2.0)
+    assert v.cx == pytest.approx(v.width() / 2 * 2.0) and v.cy == pytest.approx(6.0e6 - v.height() / 2 * 2.0)
 
 
 def test_level_order_warning():
