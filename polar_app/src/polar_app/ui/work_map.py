@@ -4,9 +4,10 @@
 (кут датчика + зміщення нуля), висота ≈ 70 пікселів на будь-якому рівні. Без датчика — останній
 відомий азимут (або зміщення нуля, якщо камера ще не виходила на звʼязок).
 
-«Демо» — демонстрація визначення цілі: правий клік на карті ставить червону ціль на середній висоті
-камер, і кожна камера повертається так, щоб її центр дивився на ціль (азимут і кут місця — точно, з
-координат камери й цілі, з урахуванням кривини Землі).
+«Демо» — демонстрація визначення цілі: правий клік на карті ставить червону ціль, і кожна камера
+повертається так, щоб її центр дивився на ціль (азимут і кут місця — точно, з координат камери й
+цілі, з урахуванням кривини Землі). Висота цілі — поле поруч: «над камерами» (від середньої висоти
+камер, за замовчуванням +100 м) або «над рівнем моря»; зміна висоти одразу перенацілює камери.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from typing import List, Optional, Tuple
 
 from PyQt6.QtCore import QPointF, Qt, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from polar_core.control import ManualControlLocked
 from polar_core.geo import GeoPoint, LocalFrame, bearing_elevation
@@ -41,6 +42,20 @@ class WorkMapScreen(QWidget):
                                  "повертаються центром на неї")
         self.demo_btn.toggled.connect(self._demo_toggled)
         head.addWidget(self.demo_btn)
+        head.addSpacing(12)
+        head.addWidget(QLabel("Висота цілі, м"))
+        self.demo_alt = QDoubleSpinBox()
+        self.demo_alt.setRange(-1000.0, 20000.0)
+        self.demo_alt.setDecimals(1)
+        self.demo_alt.setSingleStep(10.0)
+        self.demo_alt.setValue(100.0)
+        self.demo_alt.setToolTip("Висота цілі: над середньою висотою камер або над рівнем моря")
+        self.demo_alt.valueChanged.connect(self._demo_alt_changed)
+        head.addWidget(self.demo_alt)
+        self.demo_alt_mode = QComboBox()
+        self.demo_alt_mode.addItems(["над камерами", "над рівнем моря"])
+        self.demo_alt_mode.currentIndexChanged.connect(self._demo_mode_changed)
+        head.addWidget(self.demo_alt_mode)
         v.addLayout(head)
         self.demo_target: Optional[GeoPoint] = None
         self.demo_aims: List[Tuple[str, float, float, float]] = []      # камера, азимут, кут місця, відстань
@@ -87,6 +102,26 @@ class WorkMapScreen(QWidget):
             self.demo_info.setText("")
         self.view.update()
 
+    def _cameras_alt(self) -> float:
+        recs = [r for r in self.ctx.records() if r.latitude is not None and r.longitude is not None]
+        return sum((r.altitude_m or 0.0) for r in recs) / len(recs) if recs else 0.0
+
+    def target_altitude(self) -> float:
+        """Висота цілі над рівнем моря з поля «Висота цілі»."""
+        v = self.demo_alt.value()
+        return v if self.demo_alt_mode.currentIndex() == 1 else self._cameras_alt() + v
+
+    def _demo_mode_changed(self, index: int) -> None:
+        """Перемикач способу відліку зберігає ту саму висоту цілі — змінюється лише число в полі."""
+        base = self._cameras_alt()
+        self.demo_alt.blockSignals(True)
+        self.demo_alt.setValue(self.demo_alt.value() + base if index == 1 else self.demo_alt.value() - base)
+        self.demo_alt.blockSignals(False)
+
+    def _demo_alt_changed(self, _v: float) -> None:
+        if self.demo_btn.isChecked() and self.demo_target is not None:
+            self.set_demo_target(self.demo_target.latitude, self.demo_target.longitude)
+
     def on_right_click(self, lat: float, lon: float) -> None:
         if not self.demo_btn.isChecked():
             return
@@ -99,7 +134,7 @@ class WorkMapScreen(QWidget):
             self.demo_info.setText("Демо: у камер немає координат.")
             self.demo_info.setStyleSheet(f"color: {BAD}")
             return []
-        alt = sum((r.altitude_m or 0.0) for r in recs) / len(recs)
+        alt = self.target_altitude()
         target = GeoPoint(lat, lon, alt)
         frame = LocalFrame(target)
         aims, errors = [], []
@@ -113,7 +148,8 @@ class WorkMapScreen(QWidget):
             except (ManualControlLocked, RuntimeError, KeyError, ValueError) as e:
                 errors.append(f"{r.name}: {e}")
         self.demo_target, self.demo_aims = target, aims
-        lines = [f"Ціль: {lat:.6f}, {lon:.6f}, висота {alt:.1f} м (середня висота камер)"]
+        rel = alt - self._cameras_alt()
+        lines = [f"Ціль: {lat:.6f}, {lon:.6f}, висота {alt:.1f} м над рівнем моря ({rel:+.1f} м над камерами)"]
         lines += [f"{n}: азимут {a:.2f}°, кут місця {e:+.2f}°, відстань {d:.0f} м" for n, a, e, d in aims]
         if errors:
             lines.append("Увага: " + "; ".join(errors))

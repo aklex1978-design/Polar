@@ -731,7 +731,8 @@ def test_work_map_demo_target(win):
                      QPoint(int(pt.x()), int(pt.y())))
     assert wm.demo_target is not None
     g = wm.demo_target
-    assert g.altitude_m == pytest.approx(sum(r.altitude_m for r in recs) / len(recs))
+    cam_alt = sum(r.altitude_m for r in recs) / len(recs)
+    assert g.altitude_m == pytest.approx(cam_alt + 100.0)                # за замовчуванням +100 м над камерами
     assert abs(g.latitude - lat) < 0.001 and abs(g.longitude - lon) < 0.001
     assert len(wm.demo_aims) == len(recs) and "азимут" in wm.demo_info.text()
     frame = LocalFrame(g)
@@ -739,5 +740,18 @@ def test_work_map_demo_target(win):
         az, el, _d = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), g)
         assert wait(15, lambda r=r, az=az: abs(((win.ctx.control.status(r.name).azimuth_deg or 0) - az + 180) % 360
                                                - 180) < 0.5), (r.name, az, win.ctx.control.status(r.name))
+    assert all(e > 0.5 for _n, _a, e, _d in wm.demo_aims)                 # ціль у повітрі — кут місця > 0
+    # зміна висоти одразу перенацілює камери; перемикач способу відліку зберігає висоту цілі
+    wm.demo_alt.setValue(250.0)
+    assert wm.demo_target.altitude_m == pytest.approx(cam_alt + 250.0)
+    wm.demo_alt_mode.setCurrentIndex(1)
+    assert wm.demo_alt.value() == pytest.approx(cam_alt + 250.0)
+    assert wm.demo_target.altitude_m == pytest.approx(cam_alt + 250.0)
+    wm.demo_alt.setValue(500.0)                                          # над рівнем моря
+    assert wm.demo_target.altitude_m == pytest.approx(500.0) and "500.0 м над рівнем моря" in wm.demo_info.text()
+    r0 = recs[0]
+    _az, el, _d = bearing_elevation(LocalFrame(wm.demo_target), GeoPoint(r0.latitude, r0.longitude, r0.altitude_m),
+                                    wm.demo_target)
+    assert wait(15, lambda: abs((win.ctx.control.status(r0.name).elevation_deg or 0) - el) < 0.5)
     wm.demo_btn.click()
     assert wm.demo_target is None and wm.demo_info.text() == ""
