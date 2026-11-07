@@ -1,4 +1,4 @@
-"""«Робота / Режим роботи»: мітка режиму, «Навчання», «Слідкування» і стан камер."""
+"""«Робота / Режим роботи»: мітка режиму, «Навчання», «Слідкування», стан камер і таблиця виявлених цілей."""
 from __future__ import annotations
 
 from PyQt6.QtCore import QTimer
@@ -10,6 +10,8 @@ from polar_core.detection import DETECTION, TRACKING
 from ..learning_service import RUNNING
 
 BLUE, GREEN, RED, GREY = "#1e66d0", "#2e7d32", "#c62828", "#6b6b6b"
+TARGET_COLUMNS = ["Камера", "Ціль", "Час", "Азимут, °", "Кут місця, °", "Широта, °", "Довгота, °", "Висота, м",
+                  "Відстань, м"]
 
 
 class WorkScreen(QWidget):
@@ -47,6 +49,16 @@ class WorkScreen(QWidget):
             hh.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         v.addWidget(self.table)
+        v.addWidget(QLabel("Виявлені цілі"))
+        self.targets = QTableWidget(0, len(TARGET_COLUMNS))
+        self.targets.setHorizontalHeaderLabels(TARGET_COLUMNS)
+        self.targets.verticalHeader().setVisible(False)
+        self.targets.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.targets.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.targets.horizontalHeader().setStretchLastSection(True)
+        self.targets.setToolTip("Один рядок — одна камера; камера, що цілі не бачить, — порожній рядок. "
+                                "Широта, довгота, висота і відстань — коли ціль бачать дві й більше камери.")
+        v.addWidget(self.targets, 1)
         self.message = QLabel("")
         self.message.setWordWrap(True)
         v.addWidget(self.message)
@@ -89,7 +101,34 @@ class WorkScreen(QWidget):
             from PyQt6.QtGui import QColor
             it.setForeground(QColor(color))
 
+    def _cell(self, table, r: int, c: int, text: str) -> None:
+        it = table.item(r, c)
+        if it is None:
+            it = QTableWidgetItem()
+            table.setItem(r, c, it)
+        if it.text() != text:
+            it.setText(text)
+
+    def refresh_targets(self) -> None:
+        det = self.ctx.detection
+        rows = det.targets.rows() if det.active else [{"camera": r.name} for r in self.ctx.records()]
+        self.targets.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            t = row.get("time")
+            vals = [row["camera"],
+                    f"№{row['target']}" if "target" in row else "",
+                    t.astimezone().strftime("%H:%M:%S.%f")[:-3] if t else "",
+                    f"{row['az']:.2f}" if "az" in row else "",
+                    f"{row['el']:.2f}" if "el" in row else "",
+                    f"{row['lat']:.6f}" if "lat" in row else "",
+                    f"{row['lon']:.6f}" if "lon" in row else "",
+                    f"{row['alt']:.1f}" if "alt" in row else "",
+                    f"{row['dist']:.1f}" if row.get("dist") is not None else ""]
+            for c, text in enumerate(vals):
+                self._cell(self.targets, i, c, text)
+
     def refresh(self) -> None:
+        self.refresh_targets()
         learning, det = self.ctx.learning, self.ctx.detection
         recs = self.ctx.records()
         self.table.setRowCount(len(recs))

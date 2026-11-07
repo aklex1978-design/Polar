@@ -494,3 +494,37 @@ def test_snapshot_window_follows_camera(win, tmp_path):
     assert w.image.pixmap() is not None and not w.image.pixmap().isNull()
     win.show_cameras()
     w.close()
+
+
+def test_work_screen_targets_table(win):
+    """Таблиця виявлених цілей: рядок на камеру; GPS, висота і відстань — для цілі з двох і більше камер."""
+    from types import SimpleNamespace as NS
+
+    from polar_core.detection import DetectionSettings
+    from polar_core.geo import GeoPoint, LocalFrame, bearing_elevation
+    w = win.work
+    win.stack.setCurrentWidget(w)
+    recs = win.ctx.records()
+    w.refresh()
+    assert w.targets.rowCount() == len(recs) and w.targets.item(0, 5).text() == ""
+    svc = win.ctx.detection.targets
+    svc.start(recs, DetectionSettings())
+    svc._stop.set()
+    svc._thread.join()
+    target = GeoPoint(50.4515, 30.5270, 450.0)
+    frame = LocalFrame.around(GeoPoint(r.latitude, r.longitude, r.altitude_m) for r in recs)
+    for _ in range(3):
+        t = svc._clock()
+        for r in recs[:2]:                                     # третя камера ціль не бачить
+            az, el, _d = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), target)
+            svc.offer(r, [(NS(id=1), NS(az=az, el=el))], t)
+        svc.offer(recs[2], [], t)
+        svc.step()
+    win.ctx.detection.mode.start_tracking()                       # таблиця показує цілі в Слідкуванні
+    w.refresh()
+    assert w.targets.rowCount() == 3
+    assert w.targets.item(0, 1).text() == "№1" and w.targets.item(0, 5).text() == "50.451500"
+    assert float(w.targets.item(1, 7).text()) == pytest.approx(450.0, abs=0.2)
+    assert w.targets.item(2, 0).text() == recs[2].name and w.targets.item(2, 3).text() == ""
+    win.ctx.detection.mode.stop()
+    svc.stop()
