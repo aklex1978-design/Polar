@@ -1,13 +1,12 @@
-"""Карта (ТЗ, «Налаштування / Карта»): GeoTIFF → 8 рівнів масштабу, тайлами на диску.
+"""Карта (ТЗ, «Налаштування / Карта»): до 8 рівнів, на кожному — своя карта з файлу GeoTIFF.
 
 * Система координат карт — WGS 84 / Pseudo-Mercator (EPSG:3857). Файли в EPSG:3857 беруться без
   перерахунку; файли в географічних координатах (EPSG:4326) перераховуються під час завантаження;
   інші системи — лише якщо встановлено rasterio (GDAL).
-* Рівні 1–8 — це рівні зуму вебкарти Z…Z+7; кожен наступний удвічі детальніший. Тайли 256 × 256
-  у загальній сітці вебкарти: <каталог карт>/<рівень>/<x>/<y>.png.
-* Джерело рівня: власний файл рівня; інакше — зменшення з найближчого детальнішого файлу; інакше —
-  збільшення найближчого дрібнішого рівня. Збільшені рівні на диск не пишуться (нових деталей у них
-  немає, а обсяг ріс би вчетверо з кожним рівнем) — їх збільшує на екрані віджет карти.
+* Кожен рівень показується у власному масштабі свого файлу (крок пікселя EPSG:3857 з файлу). Зум
+  перемикає рівні від оглядового до найдетальнішого — за роздільною здатністю, а не за номером.
+* Рівень зберігається тайлами 256 × 256 у сітці пікселів свого файлу: <каталог карт>/<рівень>/<x>/<y>.png;
+  межі, крок пікселя, файл і дата — у таблиці map_levels.
 """
 from __future__ import annotations
 
@@ -226,80 +225,46 @@ def _reproject_with_gdal(path, epsg, osm, tiled) -> GeoRaster:
     return GeoRaster(np.ascontiguousarray(out.transpose(1, 2, 0)), tr.c, tr.f, tr.a, -tr.e, path, epsg, osm, tiled)
 
 
-# --- рівні -----------------------------------------------------------------------------------------------
+# --- рівні ---------------------------------------------------------------------------------------------
+
+class Cancelled(Exception):
+    pass
+
 
 @dataclass
-class LevelPlan:
-    level: int                        # 1…8
-    zoom: int                         # рівень зуму вебкарти Z + level − 1
-    state: str                        # file | downsampled | upsampled | none
-    source: Optional[str] = None      # файл, з якого будується рівень
-    source_level: Optional[int] = None    # для upsampled — який рівень збільшується
-    pixels: int = 0                   # пікселів на диску
+class MapLevel:
+    level: int                          # 1…8 — рядок у таблиці рівнів
+    res: float                          # крок пікселя EPSG:3857, м
+    x0: float                           # лівий верхній кут, EPSG:3857
+    y0: float
+    width: int                          # розмір у пікселях
+    height: int
+    source_file: str
+    tiles_dir: str
+    attribution: str = ""
+    loaded_at: str = ""
     warning: str = ""
-    bounds: Optional[Tuple[float, float, float, float]] = None
 
     @property
-    def state_text(self) -> str:
-        name = os.path.basename(self.source) if self.source else ""
-        return {"file": f"з файлу {name}", "downsampled": f"зменшено з {name}",
-                "upsampled": f"збільшення рівня {self.source_level} на екрані",
-                "none": "немає даних"}[self.state]
+    def bounds(self) -> Tuple[float, float, float, float]:
+        return self.x0, self.y0 - self.height * self.res, self.x0 + self.width * self.res, self.y0
+
+    @property
+    def zoom(self) -> float:
+        """Еквівалент зуму вебкарти."""
+        return zoom_for_res(self.res)
+
+    def ground_res(self) -> float:
+        b = self.bounds
+        return ground_res(self.res, merc_to_lonlat(0, (b[1] + b[3]) / 2)[1])
+
+    def tile_path(self, tx: int, ty: int) -> str:
+        return os.path.join(self.tiles_dir, str(tx), f"{ty}.png")
 
 
-def default_base_zoom(rasters: Iterable[GeoRaster]) -> int:
-    """Z за замовчуванням: рівень найдрібнішого (оглядового) файлу, округлений до цілого."""
-    zs = [r.native_zoom for r in rasters]
-    return int(round(min(zs))) if zs else 14
-
-
-def native_level(r: GeoRaster, base_zoom: int) -> int:
-    return int(round(r.native_zoom)) - base_zoom + 1
-
-
-def plan_levels(base_zoom: int, main: Optional[GeoRaster], level_files: Dict[int, GeoRaster]) -> List[LevelPlan]:
-    """Звідки береться кожен рівень (ТЗ «Порядок джерел»)."""
-    cands = [(lvl, r) for lvl, r in level_files.items()]
-    if main is not None:
-        cands.append((native_level(main, base_zoom), main))
-    plans = []
-    for lvl in range(1, LEVELS + 1):
-        z = base_zoom + lvl - 1
-        p = LevelPlan(lvl, z, "none")
-        own = level_files.get(lvl)
-        if own is not None:
-            p.state, p.source = "file", own.path
-            src = own
-            ratio = own.res / res_at_zoom(z)
-            if not 0.7 <= ratio <= 1.45:
-                p.warning = (f"роздільна здатність файлу {own.ground_res:.2f} м/піксель не відповідає рівню "
-                             f"({ground_res(res_at_zoom(z), own.center_lat):.2f} м/піксель)")
-        else:
-            finer = [(cl, r) for cl, r in cands if cl >= lvl]
-            if finer:
-                cl, src = min(finer, key=lambda c: c[0])
-                p.state, p.source = ("file" if cl == lvl and src is main else "downsampled"), src.path
-            else:
-                src = None
-        if src is not None:
-            r = res_at_zoom(z)
-            a, b, c, d = src.bounds
-            p.bounds = src.bounds
-            p.pixels = int(math.ceil((c - a) / r) * math.ceil((d - b) / r))
-        plans.append(p)
-    last = None
-    for p in plans:
-        if p.state == "none" and last is not None:
-            p.state, p.source_level = "upsampled", last
-            p.warning = "деталізації файлів не вистачає — рівень показується збільшеним"
-        elif p.state != "none":
-            last = p.level
-    return plans
-
-
-def estimate_bytes(plans: Iterable[LevelPlan]) -> int:
-    """Оцінка обсягу тайлів на диску (PNG RGBA, із запасом — як без стискання)."""
-    return sum(p.pixels * 4 for p in plans if p.state in ("file", "downsampled"))
+def estimate_bytes(r: GeoRaster) -> int:
+    """Оцінка обсягу тайлів рівня на диску (як без стискання — із запасом)."""
+    return r.width * r.height * 4
 
 
 def free_bytes(directory: str) -> int:
@@ -309,101 +274,61 @@ def free_bytes(directory: str) -> int:
     return shutil.disk_usage(d or ".").free
 
 
-class Cancelled(Exception):
-    pass
-
-
-def build_levels(plans: List[LevelPlan], rasters: Dict[str, GeoRaster], out_dir: str,
-                 progress: Optional[Callable[[float, str], bool]] = None) -> List[LevelPlan]:
-    """Побудувати тайли рівнів. progress(частка, текст) → False скасовує (каталог повертається як був)."""
+def build_level(r: GeoRaster, level: int, out_dir: str, attribution: str = "",
+                progress: Optional[Callable[[float, str], bool]] = None) -> MapLevel:
+    """Записати карту рівня тайлами в її власному масштабі. progress(частка, текст) → False скасовує
+    (попередня карта рівня залишається)."""
     import cv2
 
     work = out_dir + ".building"
     if os.path.isdir(work):
         shutil.rmtree(work)
     os.makedirs(work)
-    todo = [p for p in plans if p.state in ("file", "downsampled")]
-    total = sum(p.pixels for p in todo) or 1
-    done = 0
-
-    def tick(text: str) -> None:
-        if progress is not None and progress(min(1.0, done / total), text) is False:
-            raise Cancelled()
-
+    nx, ny = math.ceil(r.width / TILE), math.ceil(r.height / TILE)
+    total = nx * ny
     try:
-        for p in todo:
-            src = rasters[p.source]
-            r = res_at_zoom(p.zoom)
-            gx0, gy0 = global_px(src.x0, src.y0, p.zoom)
-            sx, sy = src.res_x / r, src.res_y / r               # масштаб файл → рівень
-            w, h = max(1, int(round(src.width * sx))), max(1, int(round(src.height * sy)))
-            interp = cv2.INTER_AREA if sx < 1 else cv2.INTER_LINEAR
-            img = cv2.resize(src.image, (w, h), interpolation=interp)
-            # зсув до сітки тайлів (дробова частина пікселя — через warpAffine)
-            tx0, ty0 = int(gx0 // TILE), int(gy0 // TILE)
-            tx1, ty1 = int((gx0 + w) // TILE), int((gy0 + h) // TILE)
-            ox, oy = gx0 - tx0 * TILE, gy0 - ty0 * TILE
-            canvas_w, canvas_h = (tx1 - tx0 + 1) * TILE, (ty1 - ty0 + 1) * TILE
-            m = np.float32([[1, 0, ox], [0, 1, oy]])
-            canvas = cv2.warpAffine(img, m, (canvas_w, canvas_h), flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
-            del img
-            level_dir = os.path.join(work, str(p.level))
-            n_tiles = (tx1 - tx0 + 1) * (ty1 - ty0 + 1)
-            k = 0
-            for tx in range(tx0, tx1 + 1):
-                col = os.path.join(level_dir, str(tx))
-                for ty in range(ty0, ty1 + 1):
-                    tile = canvas[(ty - ty0) * TILE:(ty - ty0 + 1) * TILE, (tx - tx0) * TILE:(tx - tx0 + 1) * TILE]
-                    k += 1
-                    if tile[..., 3].any():
-                        os.makedirs(col, exist_ok=True)
-                        cv2.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
-                    if k % 64 == 0:
-                        tick(f"рівень {p.level}: тайл {k} з {n_tiles}")
-            done += p.pixels
-            tick(f"рівень {p.level} готовий")
+        k = 0
+        for tx in range(nx):
+            col = os.path.join(work, str(tx))
+            for ty in range(ny):
+                tile = r.image[ty * TILE:(ty + 1) * TILE, tx * TILE:(tx + 1) * TILE]
+                k += 1
+                if tile[..., 3].any():
+                    if tile.shape[0] != TILE or tile.shape[1] != TILE:      # крайні тайли — доповнити
+                        full = np.zeros((TILE, TILE, 4), np.uint8)
+                        full[:tile.shape[0], :tile.shape[1]] = tile
+                        tile = full
+                    os.makedirs(col, exist_ok=True)
+                    cv2.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
+                if progress is not None and (k % 16 == 0 or k == total) and \
+                        progress(k / total, f"тайл {k} з {total}") is False:
+                    raise Cancelled()
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.replace(work, out_dir)
-    return plans
+    return MapLevel(level, r.res, r.x0, r.y0, r.width, r.height, r.path, out_dir, attribution,
+                    dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"))
+
+
+def remove_level_tiles(out_dir: str) -> None:
+    if os.path.isdir(out_dir):
+        shutil.rmtree(out_dir)
 
 
 # --- база (map_levels) і налаштування ------------------------------------------------------------------
 
 @dataclass
-class MapLevel:
-    level: int
-    zoom: int
-    scale_m_per_px: float             # крок пікселя EPSG:3857
-    state: str
-    source_file: Optional[str]
-    source_level: Optional[int]
-    bounds: Optional[Tuple[float, float, float, float]]
-    tiles_dir: str
-    attribution: str = ""
-    loaded_at: str = ""
-    warning: str = ""
-
-
-@dataclass
 class MapSettings:
-    main_file: str = ""
-    base_zoom: Optional[int] = None
     level_files: Dict[int, str] = field(default_factory=dict)
-    osm: Optional[bool] = None        # None — визначати з файлу
+    osm: bool = False                 # карти з даних OpenStreetMap — показувати підпис
 
 
 def load_map_settings(conn: sqlite3.Connection) -> MapSettings:
     rows = dict(conn.execute("SELECT key, value FROM settings WHERE key LIKE 'map.%'").fetchall())
-    s = MapSettings(main_file=rows.get("map.main_file", ""))
-    if rows.get("map.base_zoom"):
-        s.base_zoom = int(rows["map.base_zoom"])
-    if rows.get("map.osm") in ("0", "1"):
-        s.osm = rows["map.osm"] == "1"
+    s = MapSettings(osm=rows.get("map.osm") == "1")
     for lvl in range(1, LEVELS + 1):
         v = rows.get(f"map.level_file.{lvl}")
         if v:
@@ -412,8 +337,7 @@ def load_map_settings(conn: sqlite3.Connection) -> MapSettings:
 
 
 def save_map_settings(conn: sqlite3.Connection, s: MapSettings) -> None:
-    vals = {"map.main_file": s.main_file, "map.base_zoom": "" if s.base_zoom is None else str(s.base_zoom),
-            "map.osm": "" if s.osm is None else ("1" if s.osm else "0")}
+    vals = {"map.osm": "1" if s.osm else "0"}
     for lvl in range(1, LEVELS + 1):
         vals[f"map.level_file.{lvl}"] = s.level_files.get(lvl, "")
     with conn:
@@ -422,28 +346,38 @@ def save_map_settings(conn: sqlite3.Connection, s: MapSettings) -> None:
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v))
 
 
-def save_levels(conn: sqlite3.Connection, plans: List[LevelPlan], tiles_dir: str, attribution: str) -> None:
-    now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+def save_level(conn: sqlite3.Connection, lv: MapLevel) -> None:
+    b = lv.bounds
     with conn:
-        conn.execute("DELETE FROM map_levels")
-        for p in plans:
-            b = p.bounds or (None, None, None, None)
-            conn.execute(
-                "INSERT INTO map_levels (zoom, scale_m_per_px, file_path, loaded_at, web_zoom, state, source_level, "
-                "min_x, min_y, max_x, max_y, tiles_dir, attribution, warning) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (p.level, res_at_zoom(p.zoom), p.source, now, p.zoom, p.state, p.source_level, *b,
-                 os.path.join(tiles_dir, str(p.level)), attribution, p.warning))
+        conn.execute("DELETE FROM map_levels WHERE zoom = ?", (lv.level,))
+        conn.execute(
+            "INSERT INTO map_levels (zoom, scale_m_per_px, file_path, loaded_at, web_zoom, state, min_x, min_y, "
+            "max_x, max_y, tiles_dir, attribution, warning) VALUES (?, ?, ?, ?, ?, 'file', ?, ?, ?, ?, ?, ?, ?)",
+            (lv.level, lv.res, lv.source_file, lv.loaded_at, int(round(lv.zoom)), *b, lv.tiles_dir,
+             lv.attribution, lv.warning))
+
+
+def delete_level(conn: sqlite3.Connection, level: int) -> None:
+    with conn:
+        conn.execute("DELETE FROM map_levels WHERE zoom = ?", (level,))
+
+
+def set_attribution(conn: sqlite3.Connection, text: str) -> None:
+    with conn:
+        conn.execute("UPDATE map_levels SET attribution = ?", (text,))
 
 
 def load_levels(conn: sqlite3.Connection) -> List[MapLevel]:
-    rows = conn.execute("SELECT zoom, web_zoom, scale_m_per_px, state, file_path, source_level, min_x, min_y, "
-                        "max_x, max_y, tiles_dir, attribution, loaded_at, warning FROM map_levels "
+    """Завантажені рівні (лише ті, що мають карту), у порядку номерів."""
+    rows = conn.execute("SELECT zoom, scale_m_per_px, min_x, min_y, max_x, max_y, file_path, tiles_dir, "
+                        "attribution, loaded_at, warning FROM map_levels WHERE state = 'file' AND min_x IS NOT NULL "
                         "ORDER BY zoom").fetchall()
     out = []
     for r in rows:
-        b = None if r[6] is None else (r[6], r[7], r[8], r[9])
-        out.append(MapLevel(r[0], r[1], r[2], r[3] or "none", r[4], r[5], b, r[10] or "", r[11] or "",
-                            r[12] or "", r[13] or ""))
+        res = r[1]
+        w, h = int(round((r[4] - r[2]) / res)), int(round((r[5] - r[3]) / res))
+        out.append(MapLevel(r[0], res, r[2], r[5], w, h, r[6] or "", r[7] or "", r[8] or "", r[9] or "",
+                            r[10] or ""))
     return out
 
 

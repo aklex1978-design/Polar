@@ -51,9 +51,9 @@ class WorkMapScreen(QWidget):
         self.timer.start(200)
 
     def enter(self) -> None:
-        self.view.set_levels(self.ctx.maps.levels(), self.ctx.maps.settings().base_zoom)
-        self.toolbar.refresh()
         self.center()
+        self.view.set_levels(self.ctx.maps.levels())
+        self.toolbar.refresh()
 
     def center(self) -> None:
         c = self.ctx.maps.center()

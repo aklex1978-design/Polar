@@ -1,4 +1,4 @@
-"""Етап 7: карта в застосунку — перевірка файлів, побудова рівнів у фоні, скасування, map_levels."""
+"""Етап 7: карта в застосунку — на кожному рівні своя карта; завантаження у фоні, скасування, map_levels."""
 import math
 import os
 import sys
@@ -42,51 +42,59 @@ def ctx(tmp_path):
             conn.execute("UPDATE cameras SET latitude = ?, longitude = ? WHERE id = ?", (la, lo, i))
     c = fakes.bind(build_context(path, video_options=fakes.video_options(), ros_factory=no_ros))
     yield c
+    c.maps.shutdown()
     c.shutdown()
 
 
 def test_inspect_and_center(ctx, tmp_path):
     over, det = sample_files(str(tmp_path))
-    info = ctx.maps.inspect(over, need_cameras=True)
-    assert info.ok and "6.90 м/піксель" in info.text and "поза межами" not in info.text
-    assert "поза межами" in ctx.maps.inspect(det, need_cameras=True).text      # детальний — не всі камери
-    assert "не відповідає" in ctx.maps.inspect(det, level_zoom=14).text
+    info = ctx.maps.inspect(over)
+    assert info.ok and "6.90 м/піксель" in info.text and "поза картою" not in info.text
+    assert "поза картою" in ctx.maps.inspect(det).text                  # детальний — не всі камери
     bad = tmp_path / "x.tif"
     bad.write_bytes(b"not a tiff")
     assert not ctx.maps.inspect(str(bad)).ok
-    c = ctx.maps.center()
-    assert c == pytest.approx(((50.329 + 50.340) / 2, (28.776 + 28.800) / 2))
+    assert "не знайдено" in ctx.maps.inspect(str(tmp_path / "missing.tif")).text
+    assert ctx.maps.center() == pytest.approx(((50.329 + 50.340) / 2, (28.776 + 28.800) / 2))
 
 
-def test_build_sample_as_levels_z_and_z2(ctx, tmp_path):
-    """Критерій етапу: прикладові файли — рівні Z і Z+2; камери в межах карти."""
+def test_each_level_loads_own_map(ctx, tmp_path):
+    """Кожен рівень — своя карта у власному масштабі; прикладові файли — два рівні, що різняться в 4 рази."""
     over, det = sample_files(str(tmp_path))
-    ctx.maps.save_settings(mp.MapSettings(main_file=over, level_files={1: over, 3: det}))
-    z, plans, errors = ctx.maps.plan()
-    assert not errors and z == 14
-    assert ctx.maps.start_build()
-    st = ctx.maps.wait(60)
-    assert st.done and not st.error, st
-    lv = ctx.maps.levels()
-    assert [x.state for x in lv[:3]] == ["file", "downsampled", "file"]
-    assert lv[0].source_file == over and lv[2].source_file == det and lv[0].attribution == mp.OSM_ATTRIBUTION
-    assert all(x.state == "upsampled" for x in lv[3:])
-    assert os.path.isdir(lv[0].tiles_dir) and os.path.isdir(lv[2].tiles_dir)
-    assert os.path.dirname(lv[0].tiles_dir).endswith("maps")
-    for _n, la, lo in ctx.maps.camera_points():                    # камери стоять у своїх координатах
+    ctx.maps.load_level(2, over)
+    ctx.maps.load_level(5, det)
+    ctx.maps.wait(60)
+    assert ctx.maps.status[2].text == "завантажено" and ctx.maps.status[5].text == "завантажено"
+    lv = {x.level: x for x in ctx.maps.levels()}
+    assert set(lv) == {2, 5}
+    assert lv[2].source_file == over and lv[5].source_file == det
+    assert lv[2].res / lv[5].res == pytest.approx(4.0, rel=1e-6)
+    assert lv[2].attribution == mp.OSM_ATTRIBUTION and ctx.maps.settings().osm      # визначено з файлу
+    assert "поза картою" in lv[5].warning and not lv[2].warning
+    assert os.path.isdir(lv[2].tiles_dir) and os.path.dirname(lv[2].tiles_dir).endswith("maps")
+    for _n, la, lo in ctx.maps.camera_points():                      # камери стоять у межах оглядової
         x, y = mp.lonlat_to_merc(lo, la)
-        a, b, c, d = lv[0].bounds
+        a, b, c, d = lv[2].bounds
         assert a <= x <= c and b <= y <= d
-    assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'map_loaded'").fetchone()[0] == 1
+    assert ctx.maps.settings().level_files == {2: over, 5: det}
+    ctx.maps.remove_level(5)
+    assert {x.level for x in ctx.maps.levels()} == {2} and not os.path.isdir(lv[5].tiles_dir)
+    assert ctx.maps.settings().level_files == {2: over}
+    assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'map_loaded'").fetchone()[0] == 2
 
 
-def test_build_errors_and_cancel(ctx, tmp_path):
-    ctx.maps.save_settings(mp.MapSettings(main_file=str(tmp_path / "missing.tif")))
-    assert not ctx.maps.start_build() and "не знайдено" in ctx.maps.status.error
+def test_bad_file_and_cancel(ctx, tmp_path):
+    bad = tmp_path / "x.tif"
+    bad.write_bytes(b"not a tiff")
+    ctx.maps.load_level(1, str(bad))
+    ctx.maps.wait(30)
+    assert ctx.maps.status[1].error and not ctx.maps.levels()
     over, _det = sample_files(str(tmp_path))
-    ctx.maps.save_settings(mp.MapSettings(main_file=over))
-    ctx.maps.cancel()                                                   # скасування до старту не заважає
-    assert ctx.maps.start_build()
-    ctx.maps.cancel()
-    st = ctx.maps.wait(60)
-    assert not st.running and (st.done or "скасовано" in st.text)
+    ctx.maps.load_level(1, over)
+    ctx.maps.wait(30)
+    first = ctx.maps.level(1)
+    assert first is not None
+    ctx.maps.load_level(1, over)
+    ctx.maps.cancel(1)
+    ctx.maps.wait(30)
+    assert not ctx.maps.busy() and ctx.maps.level(1) is not None          # попередня карта рівня лишилась

@@ -75,65 +75,51 @@ def test_geographic_file_reprojected(tmp_path):
     assert tuple(g.image[rr, cc, :3]) == RED                   # мітка — у своїх координатах після перерахунку
 
 
-def test_plan_sample_files_as_levels_z_and_z2(sample):
-    """Критерій етапу: прикладові файли завантажуються як рівні Z і Z+2."""
-    over, det = mp.read_geotiff(sample[0]), mp.read_geotiff(sample[1])
-    z = mp.default_base_zoom([over, det])
-    assert z == 14
-    plans = mp.plan_levels(z, over, {3: det})
-    st = {p.level: p.state for p in plans}
-    assert st[1] == "file" and plans[0].source == over.path
-    assert st[2] == "downsampled" and plans[1].source == det.path          # з найближчого детальнішого
-    assert st[3] == "file" and plans[2].source == det.path and not plans[2].warning
-    assert all(st[k] == "upsampled" for k in range(4, 9)) and plans[7].source_level == 3
-    assert plans[0].zoom == 14 and plans[7].zoom == 21
-    # файл, що не відповідає рівню, — попередження
-    bad = mp.plan_levels(z, over, {5: det})
-    assert "не відповідає" in bad[4].warning
+def test_build_level_in_own_scale(sample, tmp_path):
+    """Рівень = власний файл у власному масштабі: тайли в сітці пікселів файлу, мітки — на місці."""
+    for path, color in ((sample[0], RED), (sample[1], BLUE)):
+        r = mp.read_geotiff(path)
+        calls = []
+        out = str(tmp_path / "maps" / os.path.basename(path))
+        lv = mp.build_level(r, 1, out, mp.OSM_ATTRIBUTION, progress=lambda f, t: calls.append(f) or True)
+        assert calls and calls[-1] == pytest.approx(1.0)
+        assert lv.res == pytest.approx(r.res) and lv.bounds == pytest.approx(r.bounds)
+        x, y = mp.lonlat_to_merc(CAM[1], CAM[0])
+        px, py = (x - lv.x0) / lv.res, (lv.y0 - y) / lv.res
+        tile = cv2.imread(lv.tile_path(int(px // 256), int(py // 256)), cv2.IMREAD_UNCHANGED)
+        v = tile[int(py % 256), int(px % 256)]
+        assert tuple(int(c) for c in v[2::-1]) == color and v[3] == 255       # BGRA → RGB
+    # прикладові файли: детальний у 4 рази дрібніший — два рівні зуму вебкарти
+    a, b = mp.read_geotiff(sample[0]), mp.read_geotiff(sample[1])
+    assert b.native_zoom - a.native_zoom == pytest.approx(2.0, abs=0.01)
 
 
-def test_build_tiles_marks_in_place(sample, tmp_path):
-    over, det = mp.read_geotiff(sample[0]), mp.read_geotiff(sample[1])
-    plans = mp.plan_levels(14, over, {3: det})
-    rasters = {over.path: over, det.path: det}
-    calls = []
-    out = str(tmp_path / "maps")
-    mp.build_levels(plans, rasters, out, progress=lambda f, t: calls.append(f) or True)
-    assert calls and calls[-1] == pytest.approx(1.0)
-    x, y = mp.lonlat_to_merc(CAM[1], CAM[0])
-    for level, color in ((1, RED), (3, BLUE)):
-        zoom = 14 + level - 1
-        gx, gy = mp.global_px(x, y, zoom)
-        tile = cv2.imread(os.path.join(out, str(level), str(int(gx // 256)), f"{int(gy // 256)}.png"),
-                          cv2.IMREAD_UNCHANGED)
-        px = tile[int(gy % 256), int(gx % 256)]
-        assert tuple(int(v) for v in px[2::-1]) == color and px[3] == 255      # BGRA → RGB
-    assert not os.path.isdir(os.path.join(out, "4"))                            # збільшені — не на диску
-    assert mp.estimate_bytes(plans) > 0
-
-
-def test_cancel_keeps_previous_map(sample, tmp_path):
-    over = mp.read_geotiff(sample[0])
-    plans = mp.plan_levels(14, over, {})
-    out = str(tmp_path / "maps")
-    mp.build_levels(plans, {over.path: over}, out)
+def test_cancel_keeps_previous_level(sample, tmp_path):
+    r = mp.read_geotiff(sample[0])
+    out = str(tmp_path / "maps" / "1")
+    mp.build_level(r, 1, out)
     before = sorted(os.listdir(out))
     with pytest.raises(mp.Cancelled):
-        mp.build_levels(plans, {over.path: over}, out, progress=lambda f, t: False)
+        mp.build_level(r, 1, out, progress=lambda f, t: False)
     assert sorted(os.listdir(out)) == before and not os.path.exists(out + ".building")
 
 
 def test_levels_and_settings_in_db(sample, tmp_path):
     conn = db.connect(tmp_path / "p.sqlite")
     over, det = mp.read_geotiff(sample[0]), mp.read_geotiff(sample[1])
-    plans = mp.plan_levels(14, over, {3: det})
-    mp.save_levels(conn, plans, str(tmp_path / "maps"), mp.OSM_ATTRIBUTION)
+    l1 = mp.build_level(over, 1, str(tmp_path / "maps" / "1"))
+    l2 = mp.build_level(det, 2, str(tmp_path / "maps" / "2"))
+    mp.save_level(conn, l2)
+    mp.save_level(conn, l1)
+    mp.set_attribution(conn, mp.OSM_ATTRIBUTION)
     lv = mp.load_levels(conn)
-    assert [x.level for x in lv] == list(range(1, 9))
-    assert lv[2].state == "file" and lv[2].source_file == det.path and lv[2].zoom == 16
-    assert lv[5].state == "upsampled" and lv[5].source_level == 3 and lv[0].attribution == mp.OSM_ATTRIBUTION
-    assert lv[0].bounds == pytest.approx(over.bounds)
-    s = mp.MapSettings(main_file=over.path, base_zoom=14, level_files={3: det.path})
+    assert [x.level for x in lv] == [1, 2]
+    assert lv[0].source_file == over.path and lv[0].width == over.width and lv[0].height == over.height
+    assert lv[1].res == pytest.approx(det.res) and lv[1].bounds == pytest.approx(det.bounds)
+    assert lv[0].attribution == mp.OSM_ATTRIBUTION and lv[0].zoom == pytest.approx(13.8, abs=0.05)
+    mp.delete_level(conn, 1)
+    assert [x.level for x in mp.load_levels(conn)] == [2]
+    s = mp.MapSettings(level_files={1: over.path, 3: det.path}, osm=True)
     mp.save_map_settings(conn, s)
     s2 = mp.load_map_settings(conn)
-    assert s2.main_file == over.path and s2.base_zoom == 14 and s2.level_files == {3: det.path}
+    assert s2.level_files == {1: over.path, 3: det.path} and s2.osm

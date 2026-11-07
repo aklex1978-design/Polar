@@ -153,6 +153,12 @@ MIGRATIONS = [
     ALTER TABLE map_levels ADD COLUMN attribution TEXT NOT NULL DEFAULT '';
     ALTER TABLE map_levels ADD COLUMN warning TEXT NOT NULL DEFAULT '';
     """,
+    # 7 — рівень карти = власний файл у власному масштабі (тайли в сітці пікселів файлу); рівні,
+    # побудовані за сіткою вебкарти, несумісні — їх треба завантажити наново
+    """
+    DELETE FROM map_levels;
+    DELETE FROM settings WHERE key IN ('map.main_file', 'map.base_zoom');
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

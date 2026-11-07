@@ -553,44 +553,46 @@ def _px(view, x, y):
     return c.red(), c.green(), c.blue()
 
 
-def test_map_settings_load_and_view(win, tmp_path):
-    """«Налаштування / Карта»: файли → рівні Z і Z+2, хід завантаження, карта з камерами, зум."""
+def test_map_settings_levels_and_zoom(win, tmp_path):
+    """«Налаштування / Карта»: на кожному рівні своя карта; вибір файлу одразу завантажує рівень;
+    зум перемикає рівні й показує карту відповідного рівня."""
     over, det = _kyiv_maps(str(tmp_path))
     menus = {a.text(): a for a in win.menuBar().actions()}
     assert "Налаштування" in menus and "Карта" in [a.text() for a in menus["Налаштування"].menu().actions()]
     assert [a.text() for a in menus["Робота"].menu().actions()][0] == "Карта"
     win.stack.setCurrentWidget(win.map_settings)
     m = win.map_settings
-    m.main_file.setText(over)
-    m.main_file.editingFinished.emit()
-    m.level_edits[3].setText(det)
-    m.level_edits[3].editingFinished.emit()
-    assert m.base_zoom.value() == 14 and m.osm.isChecked()
-    assert "з файлу over.tif" in m.table.item(0, 3).text()
-    assert "зменшено з detail.tif" in m.table.item(1, 3).text()
-    assert "збільшення рівня 3" in m.table.item(5, 3).text()
-    assert "МБ" in m.info.text() and m.load_btn.isEnabled()
-    m.load_btn.click()
-    ok = wait(30, lambda: not win.ctx.maps.status.running and "завантажено" in m.message.text().lower())
+    assert not hasattr(m, "main_file") and not hasattr(m, "load_btn")      # блоку завантаження немає
+    m.level_edits[1].setText(det)                                          # номер рівня — довільний
+    m.level_edits[1].editingFinished.emit()
+    m.level_edits[4].setText(over)
+    m.level_edits[4].editingFinished.emit()
+    ok = wait(30, lambda: not win.ctx.maps.busy() and "завантажено" in m.message.text().lower())
     assert ok, (m.message.text(), win.ctx.maps.status)
-    assert [lv.state for lv in m.view.levels][:3] == ["file", "downsampled", "file"]
-    assert m.view.attribution == "© OpenStreetMap contributors"
-    # пікселі карти: рівень 1 — зелений оглядовий, рівень 3 біля камери — пурпурний детальний
+    assert "м/піксель" in m.table.item(0, 3).text() and "м/піксель" in m.table.item(3, 3).text()
+    assert m.osm.isChecked() and m.view.attribution == "© OpenStreetMap contributors"
+    assert [lv.level for lv in m.view.levels] == [4, 1]                    # від оглядового до детального
     rec = win.ctx.records()[0]
     m.view.resize(600, 400)
-    m.view.set_level(1)
     m.view.center_on(rec.latitude, rec.longitude)
+    m.view.set_index(1)
     wait(0.2)
+    assert "detail.tif" in m.toolbar.label.text() and not m.toolbar.plus.isEnabled()
     pt = m.view.to_screen(rec.latitude, rec.longitude)
-    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)       # детальна карта
+    m.toolbar.minus.click()
+    wait(0.1)
+    assert "over.tif" in m.toolbar.label.text() and not m.toolbar.minus.isEnabled()
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)        # оглядова карта
+    # на детальному рівні поза детальною картою видно оглядову
     m.toolbar.plus.click()
-    m.toolbar.plus.click()
-    assert m.view.level == 3 and "Рівень 3 з 8 (зум 16)" in m.toolbar.label.text()
-    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)
-    for _ in range(10):
-        m.toolbar.plus.click()
-    assert m.view.level == 8 and not m.toolbar.plus.isEnabled()
-    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)      # збільшений рівень — не порожній
+    wait(0.1)
+    pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
+    assert 0 < pt.x() < 600 and _px(m.view, pt.x(), pt.y()) == (40, 160, 40)
+    # прибрати рівень
+    m.remove(1)
+    assert [lv.level for lv in m.view.levels] == [4] and m.level_edits[1].text() == ""
 
 
 def test_work_map_camera_triangles(win, tmp_path):

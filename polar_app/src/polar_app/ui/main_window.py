@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         self.grid.timer.stop()
         self.map_settings.timer.stop()
         self.work_map.timer.stop()
-        self.ctx.maps.cancel()
+        self.ctx.maps.shutdown()
         for w in self.grid.snapshot_windows.values():
             w.close()
         self.control.timer.stop()
