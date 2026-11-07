@@ -706,3 +706,37 @@ def test_settings_map_shows_triangles(win):
     ir, _ig, ib = _px(m.view, pt.x() + 45, pt.y())                    # усередині трикутника, на схід
     orr, _og, ob = _px(m.view, pt.x(), pt.y() - 45)                   # на північ — поза ним
     assert ib > ir + 30 and abs(ob - orr) < 20
+
+
+def test_work_map_demo_target(win):
+    """«Робота / Карта» → «Демо»: правий клік ставить ціль на середній висоті камер, камери
+    повертаються центром на неї."""
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtTest import QTest
+
+    from polar_core.geo import GeoPoint, LocalFrame, bearing_elevation
+    win.stack.setCurrentWidget(win.work_map)
+    wm = win.work_map
+    recs = win.ctx.records()
+    assert wait(5, lambda: all(win.ctx.control.status(r.name).link_ok for r in recs))
+    wm.view.right_clicked.emit(50.45, 30.52)                          # без «Демо» — нічого
+    assert wm.demo_target is None
+    wm.demo_btn.click()
+    assert wm.demo_btn.isChecked() and "правою кнопкою" in wm.demo_info.text()
+    # правий клік мишею по точці на схід від камер
+    lat, lon = 50.4505, 30.5400
+    pt = wm.view.to_screen(lat, lon)
+    QTest.mouseClick(wm.view, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier,
+                     QPoint(int(pt.x()), int(pt.y())))
+    assert wm.demo_target is not None
+    g = wm.demo_target
+    assert g.altitude_m == pytest.approx(sum(r.altitude_m for r in recs) / len(recs))
+    assert abs(g.latitude - lat) < 0.001 and abs(g.longitude - lon) < 0.001
+    assert len(wm.demo_aims) == len(recs) and "азимут" in wm.demo_info.text()
+    frame = LocalFrame(g)
+    for r in recs:
+        az, el, _d = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), g)
+        assert wait(15, lambda r=r, az=az: abs(((win.ctx.control.status(r.name).azimuth_deg or 0) - az + 180) % 360
+                                               - 180) < 0.5), (r.name, az, win.ctx.control.status(r.name))
+    wm.demo_btn.click()
+    assert wm.demo_target is None and wm.demo_info.text() == ""

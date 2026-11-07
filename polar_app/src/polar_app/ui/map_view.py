@@ -26,6 +26,7 @@ EMPTY_STEPS = [mp.res_at_zoom(z) for z in range(10, 18)]
 
 class MapView(QWidget):
     level_changed = pyqtSignal(int)
+    right_clicked = pyqtSignal(float, float)          # широта, довгота точки під курсором
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -198,6 +199,9 @@ class MapView(QWidget):
     def mousePressEvent(self, e) -> None:  # noqa: N802
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag = e.position()
+        elif e.button() == Qt.MouseButton.RightButton:
+            lon, lat = self.to_lonlat(e.position())
+            self.right_clicked.emit(lat, lon)
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
         if self._drag is not None:
