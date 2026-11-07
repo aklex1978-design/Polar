@@ -691,3 +691,18 @@ def test_work_map_camera_triangles(win, tmp_path):
     ir, _ig, ib = _px(wm.view, pt.x() + 45, pt.y())                   # усередині трикутника, на схід
     orr, _og, ob = _px(wm.view, pt.x(), pt.y() - 45)                   # на північ — поза трикутником
     assert ib > ir + 30 and abs(ob - orr) < 20
+
+
+def test_settings_map_shows_triangles(win):
+    """«Налаштування / Карта» теж показує камери трикутниками з напрямом (не крапками)."""
+    win.stack.setCurrentWidget(win.map_settings)
+    m = win.map_settings
+    assert wait(5, lambda: win.ctx.control.status("Камера 1").link_ok)
+    win.ctx.control.go_to("Камера 1", 90.0, 10.0)                   # на схід
+    assert wait(10, lambda: abs((win.ctx.control.status("Камера 1").azimuth_deg or 0) - 90.0) < 0.5)
+    rec = win.ctx.records()[0]
+    wait(0.4)
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    ir, _ig, ib = _px(m.view, pt.x() + 45, pt.y())                    # усередині трикутника, на схід
+    orr, _og, ob = _px(m.view, pt.x(), pt.y() - 45)                   # на північ — поза ним
+    assert ib > ir + 30 and abs(ob - orr) < 20

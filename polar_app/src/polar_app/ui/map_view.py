@@ -14,7 +14,7 @@ from collections import OrderedDict
 from typing import Callable, List, Optional, Tuple
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
 from polar_core import maps as mp
@@ -325,3 +325,52 @@ def draw_camera_points(cameras: Callable[[], List[Tuple[str, float, float]]]):
             p.setPen(QColor("#102a55"))
             p.drawText(pt + QPointF(9, -7), name)
     return draw
+
+
+HEIGHT_PX = 70.0
+
+
+def triangle(apex: QPointF, azimuth_deg: float, hfov_deg: float, height: float = HEIGHT_PX) -> QPolygonF:
+    """Трикутник поля зору на екрані: вершина в apex, вісь — за азимутом (0° — вгору), кут — HFOV."""
+    half = math.radians(min(hfov_deg, 170.0) / 2)
+    side = height / math.cos(half)
+    pts = [apex]
+    for s in (-1, 1):
+        a = math.radians(azimuth_deg) + s * half
+        pts.append(QPointF(apex.x() + side * math.sin(a), apex.y() - side * math.cos(a)))
+    return QPolygonF(pts)
+
+
+class CameraTriangles:
+    """Шар карти: камера — трикутник поля зору. Вершина — у GPS-точці камери, кут = HFOV, напрям —
+    поточний азимут від півночі (кут датчика + зміщення нуля), висота ≈ 70 px на будь-якому рівні.
+    Без звʼязку з сервоприводами — останній відомий азимут (або зміщення нуля)."""
+
+    def __init__(self, ctx) -> None:
+        self.ctx = ctx
+        self.last_az = {}
+
+    def azimuth(self, rec) -> Tuple[float, bool]:
+        try:
+            st = self.ctx.control.status(rec.name)
+        except Exception:  # noqa: BLE001 — камера ще не підключена до керування
+            st = None
+        online = bool(st is not None and st.link_ok and st.azimuth_deg is not None)
+        if online:
+            self.last_az[rec.name] = st.azimuth_deg
+        return self.last_az.get(rec.name, rec.north_offset_deg), online
+
+    def __call__(self, p: QPainter, view: "MapView") -> None:
+        for rec in self.ctx.records():
+            if rec.latitude is None or rec.longitude is None:
+                continue
+            apex = view.to_screen(rec.latitude, rec.longitude)
+            az, online = self.azimuth(rec)
+            poly = triangle(apex, az, rec.fov_x_deg)
+            p.setPen(QPen(QColor("#1e66d0") if online else QColor("#6b6b6b"), 2))
+            p.setBrush(QColor(30, 102, 208, 90) if online else QColor(120, 120, 120, 80))
+            p.drawPolygon(poly)
+            p.setBrush(QColor("white"))
+            p.drawEllipse(apex, 3.5, 3.5)
+            p.setPen(QColor("#102a55"))
+            p.drawText(apex + QPointF(8, 14), f"{rec.name} · {az:.0f}°")

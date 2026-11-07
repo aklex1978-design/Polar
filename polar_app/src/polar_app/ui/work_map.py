@@ -6,28 +6,12 @@
 """
 from __future__ import annotations
 
-import math
-
 from PyQt6.QtCore import QPointF, QTimer
 from PyQt6.QtGui import QColor, QPen, QPolygonF
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from .map_settings import MapToolbar
-from .map_view import MapView
-
-HEIGHT_PX = 70.0
-
-
-def triangle(apex: QPointF, azimuth_deg: float, hfov_deg: float, height: float = HEIGHT_PX) -> QPolygonF:
-    """Трикутник поля зору на екрані: вершина в apex, вісь — за азимутом (0° — вгору), кут — HFOV."""
-    half = math.radians(min(hfov_deg, 170.0) / 2)
-    side = height / math.cos(half)
-    pts = [apex]
-    for s in (-1, 1):
-        a = math.radians(azimuth_deg) + s * half
-        pts.append(QPointF(apex.x() + side * math.sin(a), apex.y() - side * math.cos(a)))
-    return QPolygonF(pts)
-
+from .map_view import CameraTriangles, MapView, triangle  # noqa: F401 — triangle: для тестів
 
 class WorkMapScreen(QWidget):
     def __init__(self, ctx, parent=None) -> None:
@@ -40,7 +24,8 @@ class WorkMapScreen(QWidget):
         v.addWidget(title)
         self.view = MapView()
         self.view.camera_points = lambda: [(la, lo) for _n, la, lo in self.ctx.maps.camera_points()]
-        self.view.overlays.append(self._draw_cameras)
+        self.cameras = CameraTriangles(ctx)
+        self.view.overlays.append(self.cameras)
         self.view.overlays.append(self._draw_targets)
         self.view.overlays.append(self._draw_north)
         v.addWidget(self.view, 1)
@@ -64,28 +49,6 @@ class WorkMapScreen(QWidget):
             self.view.update()
 
     # --- шари ---------------------------------------------------------------------------------------------
-    def azimuth(self, rec) -> float:
-        st = self.ctx.control.status(rec.name)
-        if st.link_ok and st.azimuth_deg is not None:
-            self._last_az[rec.name] = st.azimuth_deg
-        return self._last_az.get(rec.name, rec.north_offset_deg)
-
-    def _draw_cameras(self, p, view: MapView) -> None:
-        for rec in self.ctx.records():
-            if rec.latitude is None or rec.longitude is None:
-                continue
-            apex = view.to_screen(rec.latitude, rec.longitude)
-            online = self.ctx.control.status(rec.name).link_ok
-            poly = triangle(apex, self.azimuth(rec), rec.fov_x_deg)
-            fill = QColor(30, 102, 208, 90) if online else QColor(120, 120, 120, 80)
-            p.setPen(QPen(QColor("#1e66d0") if online else QColor("#6b6b6b"), 2))
-            p.setBrush(fill)
-            p.drawPolygon(poly)
-            p.setBrush(QColor("white"))
-            p.drawEllipse(apex, 3.5, 3.5)
-            p.setPen(QColor("#102a55"))
-            p.drawText(apex + QPointF(8, 14), rec.name)
-
     def _draw_targets(self, p, view: MapView) -> None:
         det = self.ctx.detection
         if not det.active:

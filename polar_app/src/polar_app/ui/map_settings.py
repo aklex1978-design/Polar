@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QHe
 from polar_core import maps as mp
 
 from .common import BAD, WARN
-from .map_view import MapView, draw_camera_points
+from .map_view import CameraTriangles, MapView
 
 FILTER = "GeoTIFF (*.tif *.tiff);;Усі файли (*)"
 
@@ -75,7 +75,7 @@ class MapSettingsScreen(QWidget):
         v.addWidget(title)
         self.view = MapView()
         self.view.camera_points = lambda: [(la, lo) for _n, la, lo in self.ctx.maps.camera_points()]
-        self.view.overlays.append(draw_camera_points(self.maps.camera_points))
+        self.view.overlays.append(CameraTriangles(ctx))         # камери — трикутники поля зору
         top = QWidget()
         tv = QVBoxLayout(top)
         tv.setContentsMargins(0, 0, 0, 0)
@@ -256,6 +256,8 @@ class MapSettingsScreen(QWidget):
         self.info.setText(f"Каталог карт: {self.maps.tiles_dir()} · вільно {free / 1e9:.1f} ГБ")
 
     def _poll(self) -> None:
+        if self.isVisible():
+            self.view.update()                                   # трикутники повертаються з камерами
         if self.maps.busy():
             self._refresh_table()
         if self.maps.version != self._seen_version:
