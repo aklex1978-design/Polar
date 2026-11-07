@@ -125,16 +125,25 @@ class MapView(QWidget):
     def index(self) -> int:
         return self.step if self.levels else self._empty_step
 
+    def dpr(self) -> float:
+        """Фізичних пікселів екрана на логічний (масштаб Windows 125 %, 150 % …)."""
+        try:
+            return max(1.0, float(self.devicePixelRatioF()))
+        except RuntimeError:
+            return 1.0
+
     @property
     def res(self) -> float:
-        """Крок пікселя вигляду: не менший за крок файлу рівня — карта ніколи не збільшується."""
+        """Метрів EPSG:3857 на логічний піксель вигляду. Піксель файлу = фізичний піксель екрана: карта
+        ніколи не збільшується (і не розмивається масштабом екрана); рівень 8 може лише зменшуватись."""
         cur = self.current
         if cur is None:
             return EMPTY_STEPS[self._empty_step]
+        native = cur.res * self.dpr()
         if self.whole and self.width() > 0 and self.height() > 0:
             a, b, c, d = cur.bounds                 # уся карта рівня 8 — у вигляді (з полями 3 %)
-            return max(cur.res, (c - a) / self.width() * 1.03, (d - b) / self.height() * 1.03)
-        return cur.res
+            return max(native, (c - a) / self.width() * 1.03, (d - b) / self.height() * 1.03)
+        return native
 
     def set_index(self, i: int) -> None:
         i = max(0, min(self.steps - 1, i))
@@ -220,8 +229,10 @@ class MapView(QWidget):
     def _draw_level(self, p: QPainter, lv: mp.MapLevel) -> int:
         """Тайли рівня, що потрапляють у вигляд. Повертає кількість."""
         r = self.res
-        k = lv.res / r                                  # пікселів екрана на піксель рівня (≤ 1)
+        dpr = self.dpr()
+        k = lv.res / r                                  # логічних пікселів на піксель рівня (≤ 1 / dpr)
         size = TILE * k
+        exact = abs(k * dpr - 1.0) < 1e-6               # 1 піксель файлу = 1 фізичний піксель
         left = self.cx - self.width() / 2 * r            # межі вигляду в EPSG:3857
         top = self.cy + self.height() / 2 * r
         tx0 = max(0, int(math.floor((left - lv.x0) / (lv.res * TILE))))
@@ -233,12 +244,16 @@ class MapView(QWidget):
         n = 0
         ox = (lv.x0 - left) / r
         oy = (top - lv.y0) / r
+        if exact:                                       # без згладжування і з вирівнюванням по пікселях
+            ox, oy = round(ox * dpr) / dpr, round(oy * dpr) / dpr
+            p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         for tx in range(tx0, tx1 + 1):
             for ty in range(ty0, ty1 + 1):
                 img = self._tile(lv, tx, ty)
                 if img is not None:
                     p.drawImage(QRectF(ox + tx * size, oy + ty * size, size, size), img)
                     n += 1
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         return n
 
     def paintEvent(self, _e) -> None:  # noqa: N802

@@ -598,7 +598,7 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     wait(0.1)
     pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
     assert 0 < pt.x() < m.view.width() and _px(m.view, pt.x(), pt.y()) == (217, 217, 212)
-    assert m.view.res == pytest.approx(m.view.current.res)                 # масштаб файлу, без збільшення
+    assert m.view.res == pytest.approx(m.view.current.res * m.view.dpr())  # піксель файлу = фізичний піксель
     # файл задано, а карти немає (після оновлення програми) — при вході на екран рівень завантажується сам
     with win.ctx.control._db_lock:
         from polar_core import maps as mp
@@ -625,7 +625,7 @@ def test_whole_map_on_least_detailed_level(app):
     assert [lv.level for lv in v.levels] == [8, 1] and v.current.level == 1
     v.zoom_out()
     assert v.current.level == 8 and v.whole
-    assert v.res == pytest.approx(max(300.0 * 5000 / 500, 300.0 * 3500 / 350) * 1.03)
+    assert v.res == pytest.approx(max(300.0 * v.dpr(), 300.0 * 5000 / v.width() * 1.03, 300.0 * 3500 / v.height() * 1.03))
     assert (v.cx, v.cy) == pytest.approx((2.0e6 + 750000, 7.0e6 - 525000))       # середина карти
     v.zoom_in()
     assert v.current.level == 1 and (v.cx, v.cy) == pytest.approx(mp.lonlat_to_merc(cam[0], cam[1]))
@@ -656,7 +656,36 @@ def test_center_between_cameras_and_cameras_outside(app):
     c3 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0)
     v.camera_points = lambda: [(c3[1], c3[0])]
     v.recenter()
-    assert v.cx == pytest.approx(v.width() / 2 * 2.0) and v.cy == pytest.approx(6.0e6 - v.height() / 2 * 2.0)
+    assert v.cx == pytest.approx(v.width() / 2 * v.res) and v.cy == pytest.approx(6.0e6 - v.height() / 2 * v.res)
+
+
+def test_map_pixels_are_file_pixels(win, tmp_path):
+    """Чіткість: кожен піксель файлу — окремий фізичний піксель екрана (за будь-якого масштабу Windows)."""
+    import numpy as np
+    sys_path = os.path.join(os.path.dirname(__file__), "..", "..", "polar_core", "tests")
+    import sys
+    sys.path.insert(0, sys_path)
+    from geotiff_util import write_geotiff
+    from polar_core import maps as mp
+    rec = win.ctx.records()[0]
+    x, y = mp.lonlat_to_merc(rec.longitude, rec.latitude)
+    img = np.zeros((300, 400, 4), np.uint8)
+    img[..., 3] = 255
+    img[:, ::2, :3] = 255                                 # вертикальні смуги через піксель: біла, чорна, …
+    path = write_geotiff(str(tmp_path / "stripes.tif"), img, x - 400, y + 300, 2.0)
+    win.stack.setCurrentWidget(win.map_settings)
+    m = win.map_settings
+    m.level_edits[1].setText(path)
+    m.level_edits[1].editingFinished.emit()
+    assert wait(30, lambda: not win.ctx.maps.busy() and m.view.levels)
+    wait(0.2)
+    shot = m.view.grab().toImage()
+    k = shot.devicePixelRatio()
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    row = int(pt.y() * k) - 40
+    vals = [shot.pixelColor(int(pt.x() * k) - 60 + i, row).red() for i in range(20)]
+    assert all(v in (0, 255) for v in vals) and len(set(vals)) == 2, vals    # без розмиття — лише 0 і 255
+    assert all(vals[i] != vals[i + 1] for i in range(19)), vals              # смуги через один піксель
 
 
 def test_level_order_warning():
