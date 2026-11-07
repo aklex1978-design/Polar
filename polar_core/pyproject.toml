@@ -7,7 +7,7 @@ name = "polar-core"
 version = "0.1.0"
 description = "Polar: ядро — кути, панорама, база даних, імітатор камери"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.21", "opencv-python-headless>=4.6", "cryptography>=3.4",
+dependencies = ["numpy>=1.21", "opencv-python-headless>=4.6", "cryptography>=3.4", "Pillow>=9",
                 "pygrabber>=0.2; sys_platform == 'win32'"]
 
 [project.optional-dependencies]

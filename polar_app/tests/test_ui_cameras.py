@@ -528,3 +528,91 @@ def test_work_screen_targets_table(win):
     assert w.targets.item(2, 0).text() == recs[2].name and w.targets.item(2, 3).text() == ""
     win.ctx.detection.mode.stop()
     svc.stop()
+
+
+def _kyiv_maps(d):
+    """Оглядовий і детальний (у 4 рази дрібніший) GeoTIFF навколо демо-камер (Київ)."""
+    import math
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "polar_core", "tests"))
+    from geotiff_util import area_raster, write_geotiff
+    r = 6.9 / math.cos(math.radians(50.45))
+    over, ox, oy = area_raster(50.462, 30.505, 50.438, 30.545, r, seed=1)
+    over[..., :3] = (40, 160, 40)                                     # однотонна: легко перевірити пікселі
+    det, dx, dy = area_raster(50.4545, 30.520, 50.4465, 30.533, r / 4, seed=2)
+    det[..., :3] = (200, 60, 200)
+    return (write_geotiff(os.path.join(d, "over.tif"), over, ox, oy, r, description="OpenStreetMap"),
+            write_geotiff(os.path.join(d, "detail.tif"), det, dx, dy, r / 4))
+
+
+def _px(view, x, y):
+    """Колір пікселя віджета в логічних координатах (з урахуванням масштабу екрана Windows)."""
+    img = view.grab().toImage()
+    k = img.devicePixelRatio()
+    c = img.pixelColor(int(x * k), int(y * k))
+    return c.red(), c.green(), c.blue()
+
+
+def test_map_settings_load_and_view(win, tmp_path):
+    """«Налаштування / Карта»: файли → рівні Z і Z+2, хід завантаження, карта з камерами, зум."""
+    over, det = _kyiv_maps(str(tmp_path))
+    menus = {a.text(): a for a in win.menuBar().actions()}
+    assert "Налаштування" in menus and "Карта" in [a.text() for a in menus["Налаштування"].menu().actions()]
+    assert [a.text() for a in menus["Робота"].menu().actions()][0] == "Карта"
+    win.stack.setCurrentWidget(win.map_settings)
+    m = win.map_settings
+    m.main_file.setText(over)
+    m.main_file.editingFinished.emit()
+    m.level_edits[3].setText(det)
+    m.level_edits[3].editingFinished.emit()
+    assert m.base_zoom.value() == 14 and m.osm.isChecked()
+    assert "з файлу over.tif" in m.table.item(0, 3).text()
+    assert "зменшено з detail.tif" in m.table.item(1, 3).text()
+    assert "збільшення рівня 3" in m.table.item(5, 3).text()
+    assert "МБ" in m.info.text() and m.load_btn.isEnabled()
+    m.load_btn.click()
+    assert wait(30, lambda: not win.ctx.maps.status.running and "завантажено" in m.message.text().lower())
+    assert [lv.state for lv in m.view.levels][:3] == ["file", "downsampled", "file"]
+    assert m.view.attribution == "© OpenStreetMap contributors"
+    # пікселі карти: рівень 1 — зелений оглядовий, рівень 3 біля камери — пурпурний детальний
+    rec = win.ctx.records()[0]
+    m.view.resize(600, 400)
+    m.view.set_level(1)
+    m.view.center_on(rec.latitude, rec.longitude)
+    wait(0.2)
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)
+    m.toolbar.plus.click()
+    m.toolbar.plus.click()
+    assert m.view.level == 3 and "Рівень 3 з 8 (зум 16)" in m.toolbar.label.text()
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)
+    for _ in range(10):
+        m.toolbar.plus.click()
+    assert m.view.level == 8 and not m.toolbar.plus.isEnabled()
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)      # збільшений рівень — не порожній
+
+
+def test_work_map_camera_triangles(win, tmp_path):
+    """«Робота / Карта»: трикутник з вершиною в камері, кут = HFOV, напрям — азимут, висота 70 px."""
+    import math
+    from PyQt6.QtCore import QPointF
+
+    from polar_app.ui.work_map import triangle
+    tri = triangle(QPointF(100, 100), 90.0, 60.0)                  # на схід, HFOV 60°
+    a, b, c = tri[0], tri[1], tri[2]
+    assert (a.x(), a.y()) == (100, 100)
+    assert (b.x() + c.x()) / 2 == pytest.approx(170.0) and (b.y() + c.y()) / 2 == pytest.approx(100.0)
+    assert math.degrees(math.atan2(abs(b.y() - c.y()) / 2, 70)) == pytest.approx(30.0)
+    win.stack.setCurrentWidget(win.work_map)
+    wm = win.work_map
+    assert wait(5, lambda: win.ctx.control.status("Камера 1").link_ok)
+    win.ctx.control.go_to("Камера 1", 90.0, 10.0)                   # азимут від півночі 90°
+    assert wait(10, lambda: abs((win.ctx.control.status("Камера 1").azimuth_deg or 0) - 90.0) < 0.5)
+    rec = win.ctx.records()[0]
+    wm.view.resize(600, 400)
+    wm.view.center_on(rec.latitude, rec.longitude)
+    wait(0.3)
+    pt = wm.view.to_screen(rec.latitude, rec.longitude)
+    ir, _ig, ib = _px(wm.view, pt.x() + 45, pt.y())                   # усередині трикутника, на схід
+    orr, _og, ob = _px(wm.view, pt.x(), pt.y() - 45)                   # на північ — поза трикутником
+    assert ib > ir + 30 and abs(ob - orr) < 20
