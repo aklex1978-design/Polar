@@ -593,11 +593,12 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
         assert -1 <= sx <= m.view.width() + 1 and -1 <= sy <= m.view.height() + 1
     pt = m.view.to_screen(rec.latitude, rec.longitude)
     assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)        # оглядова карта
-    # на детальному рівні поза детальною картою видно оглядову
+    # на детальному рівні поза детальною картою — порожньо (оглядова не збільшується під нею)
     m.toolbar.plus.click()
     wait(0.1)
     pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
-    assert 0 < pt.x() < m.view.width() and _px(m.view, pt.x(), pt.y()) == (40, 160, 40)
+    assert 0 < pt.x() < m.view.width() and _px(m.view, pt.x(), pt.y()) == (217, 217, 212)
+    assert m.view.res == pytest.approx(m.view.current.res)                 # масштаб файлу, без збільшення
     # файл задано, а карти немає (після оновлення програми) — при вході на екран рівень завантажується сам
     with win.ctx.control._db_lock:
         from polar_core import maps as mp
@@ -619,7 +620,7 @@ def test_whole_map_on_least_detailed_level(app):
     big = mp.MapLevel(8, 300.0, 2.0e6, 7.0e6, 5000, 3500, "Ukraine.tiff", "")   # 1500 × 1050 км
     small = mp.MapLevel(1, 2.0, 3.2e6, 6.5e6, 800, 600, "Вереси1.tiff", "")
     cam = mp.merc_to_lonlat(3.2e6 + 800, 6.5e6 - 600)
-    v.center_on(cam[1], cam[0])
+    v.camera_points = lambda: [(cam[1], cam[0])]
     v.set_levels([small, big])
     assert [lv.level for lv in v.levels] == [8, 1] and v.current.level == 1
     v.zoom_out()
@@ -628,6 +629,34 @@ def test_whole_map_on_least_detailed_level(app):
     assert (v.cx, v.cy) == pytest.approx((2.0e6 + 750000, 7.0e6 - 525000))       # середина карти
     v.zoom_in()
     assert v.current.level == 1 and (v.cx, v.cy) == pytest.approx(mp.lonlat_to_merc(cam[0], cam[1]))
+
+
+def test_center_between_cameras_and_cameras_outside(app):
+    """При зумі центр — середина між камерами, у межах карти; рівень без камер — порожній."""
+    from polar_app.ui.map_view import MapView
+    from polar_core import maps as mp
+    v = MapView()
+    v.resize(400, 300)
+    lv1 = mp.MapLevel(1, 2.0, 0.0, 6.0e6, 2000, 1500, "detail.tif", "")           # 4 × 3 км
+    lv2 = mp.MapLevel(2, 20.0, -20000.0, 6.02e6, 3000, 2500, "over.tif", "")      # 60 × 50 км
+    far = mp.MapLevel(3, 50.0, 1.0e6, 7.0e6, 1000, 1000, "elsewhere.tif", "")     # без камер
+    c1, c2 = mp.merc_to_lonlat(1000.0, 6.0e6 - 1000.0), mp.merc_to_lonlat(2000.0, 6.0e6 - 2000.0)
+    v.camera_points = lambda: [(c1[1], c1[0]), (c2[1], c2[0])]
+    v.set_levels([lv1, lv2, far])
+    assert v.current.level == 1 and v.level_visible
+    assert (v.cx, v.cy) == pytest.approx((1500.0, 6.0e6 - 1500.0))                # середина між камерами
+    v.zoom_out()
+    assert v.current.level == 2 and (v.cx, v.cy) == pytest.approx((1500.0, 6.0e6 - 1500.0))
+    v.zoom_out()
+    assert v.current.level == 3 and not v.level_visible and "поза межами" in v.level_text
+    assert v._draw_level is not None and v.grab().toImage().pixelColor(5, 150).red() in (217, 196)   # порожньо
+    v.zoom_in()
+    v.zoom_in()
+    # середина біля краю карти — вигляд зсувається, щоб лишатися на карті
+    c3 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0)
+    v.camera_points = lambda: [(c3[1], c3[0])]
+    v.recenter()
+    assert v.cx == pytest.approx(200 * 2.0) and v.cy == pytest.approx(6.0e6 - 150 * 2.0)
 
 
 def test_level_order_warning():

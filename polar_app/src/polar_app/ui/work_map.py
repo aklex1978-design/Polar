@@ -39,6 +39,7 @@ class WorkMapScreen(QWidget):
         title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(title)
         self.view = MapView()
+        self.view.camera_points = lambda: [(la, lo) for _n, la, lo in self.ctx.maps.camera_points()]
         self.view.overlays.append(self._draw_cameras)
         self.view.overlays.append(self._draw_targets)
         self.view.overlays.append(self._draw_north)
@@ -56,9 +57,7 @@ class WorkMapScreen(QWidget):
         self.toolbar.refresh()
 
     def center(self) -> None:
-        c = self.ctx.maps.center()
-        if c is not None:
-            self.view.center_on(*c)
+        self.view.recenter()
 
     def _tick(self) -> None:
         if self.isVisible():

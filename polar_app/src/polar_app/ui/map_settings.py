@@ -73,6 +73,7 @@ class MapSettingsScreen(QWidget):
         title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(title)
         self.view = MapView()
+        self.view.camera_points = lambda: [(la, lo) for _n, la, lo in self.ctx.maps.camera_points()]
         self.view.overlays.append(draw_camera_points(self.maps.camera_points))
         v.addWidget(self.view, 1)
         self.toolbar = MapToolbar(self.view)
@@ -158,9 +159,7 @@ class MapSettingsScreen(QWidget):
         self._refresh_table()
 
     def center(self) -> None:
-        c = self.maps.center()
-        if c is not None:
-            self.view.center_on(*c)
+        self.view.recenter()
 
     def _show_levels(self) -> None:
         self.view.set_levels(self.maps.levels())
