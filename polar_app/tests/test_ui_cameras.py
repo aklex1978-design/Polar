@@ -591,8 +591,9 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
         sx = m.view.width() / 2 + (x - m.view.cx) / m.view.res
         sy = m.view.height() / 2 - (y - m.view.cy) / m.view.res
         assert -1 <= sx <= m.view.width() + 1 and -1 <= sy <= m.view.height() + 1
-    pt = m.view.to_screen(rec.latitude, rec.longitude)
-    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (40, 160, 40)        # оглядова карта
+    sx = m.view.width() / 2 + (a - m.view.cx) / m.view.res                 # лівий верхній кут карти —
+    sy = m.view.height() / 2 - (d - m.view.cy) / m.view.res                # далеко від трикутників камер
+    assert _px(m.view, sx + 6, sy + 6) == (40, 160, 40)                    # оглядова карта
     # на детальному рівні поза детальною картою — порожньо (оглядова не збільшується під нею)
     m.toolbar.plus.click()
     wait(0.1)
