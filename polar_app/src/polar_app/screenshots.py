@@ -18,6 +18,7 @@ import shutil
 import threading
 from typing import Dict, Iterable, Optional, Tuple
 
+from polar_core import imageio
 from polar_core.angles import wrap180, wrap360
 
 
@@ -106,7 +107,7 @@ class GridSnapshots:
             else:
                 path = os.path.join(self.directory, f"el_{el_s}", f"az_{az_s}.jpg")
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            if not cv2.imwrite(path, sf.image, [cv2.IMWRITE_JPEG_QUALITY, 92]):
+            if not imageio.imwrite(path, sf.image, [cv2.IMWRITE_JPEG_QUALITY, 92]):
                 return None
             entry = {
                 "file": os.path.relpath(path, self.directory).replace(os.sep, "/"),

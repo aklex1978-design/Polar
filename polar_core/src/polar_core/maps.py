@@ -20,6 +20,8 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
+from . import imageio
+
 ORIGIN = 20037508.342789244          # половина довжини екватора в EPSG:3857, м
 TILE = 256
 LEVELS = 8
@@ -306,7 +308,7 @@ def _write_tiles(img: np.ndarray, directory: str, tick) -> None:
                     full[:tile.shape[0], :tile.shape[1]] = tile
                     tile = full
                 os.makedirs(col, exist_ok=True)
-                cv2.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
+                imageio.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
             tick()
 
 

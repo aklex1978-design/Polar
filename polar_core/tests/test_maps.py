@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from polar_core import db
+from polar_core import imageio
 from polar_core import maps as mp
 
 from geotiff_util import area_raster, write_geotiff
@@ -86,7 +87,7 @@ def test_build_level_in_own_scale(sample, tmp_path):
         assert lv.res == pytest.approx(r.res) and lv.bounds == pytest.approx(r.bounds)
         x, y = mp.lonlat_to_merc(CAM[1], CAM[0])
         px, py = (x - lv.x0) / lv.res, (lv.y0 - y) / lv.res
-        tile = cv2.imread(lv.tile_path(int(px // 256), int(py // 256)), cv2.IMREAD_UNCHANGED)
+        tile = imageio.imread(lv.tile_path(int(px // 256), int(py // 256)), cv2.IMREAD_UNCHANGED)
         v = tile[int(py % 256), int(px % 256)]
         assert tuple(int(c) for c in v[2::-1]) == color and v[3] == 255       # BGRA → RGB
     # прикладові файли: детальний у 4 рази дрібніший — два рівні зуму вебкарти
@@ -102,7 +103,7 @@ def test_pyramid_copies(tmp_path):
     p = write_geotiff(str(tmp_path / "a4.tif"), img, 3.0e6, 6.5e6, 100.0)
     lv = mp.build_level(mp.read_geotiff(p), 7, str(tmp_path / "maps" / "7"))
     assert mp.pyramid_depth(1500, 1000) == 3 and lv.pyramid() == 3
-    t = cv2.imread(lv.tile_path(0, 0, 3), cv2.IMREAD_UNCHANGED)        # 1500/8 ≈ 188 × 125 — один тайл
+    t = imageio.imread(lv.tile_path(0, 0, 3), cv2.IMREAD_UNCHANGED)        # 1500/8 ≈ 188 × 125 — один тайл
     assert t.shape == (256, 256, 4) and t[10, 10, 3] == 255 and t[200, 200, 3] == 0
     assert t[10, 50, 0] == 255 and t[10, 150, 0] == 0                  # межа половин — на місці (≈ 94)
 
@@ -136,3 +137,16 @@ def test_levels_and_settings_in_db(sample, tmp_path):
     mp.save_map_settings(conn, s)
     s2 = mp.load_map_settings(conn)
     assert s2.level_files == {1: over.path, 3: det.path} and s2.osm
+
+
+def test_unicode_paths(tmp_path):
+    """Шляхи з кирилицею (на Windows cv2.imwrite/imread з ними не працюють)."""
+    d = tmp_path / "Документи" / "Вереси"
+    d.mkdir(parents=True)
+    img = np.zeros((20, 30, 4), np.uint8)
+    img[5, 7] = (1, 2, 3, 255)
+    p = str(d / "тайл.png")
+    assert imageio.imwrite(p, img)
+    back = imageio.imread(p, cv2.IMREAD_UNCHANGED)
+    assert back.shape == (20, 30, 4) and tuple(back[5, 7]) == (1, 2, 3, 255)
+    assert imageio.imread(str(d / "немає.png")) is None
