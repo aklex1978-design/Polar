@@ -258,8 +258,17 @@ class MapLevel:
         b = self.bounds
         return ground_res(self.res, merc_to_lonlat(0, (b[1] + b[3]) / 2)[1])
 
-    def tile_path(self, tx: int, ty: int) -> str:
-        return os.path.join(self.tiles_dir, str(tx), f"{ty}.png")
+    def tile_path(self, tx: int, ty: int, p: int = 0) -> str:
+        """Тайл рівня; p > 0 — зменшена в 2^p разів копія."""
+        base = self.tiles_dir if p == 0 else os.path.join(self.tiles_dir, f"p{p}")
+        return os.path.join(base, str(tx), f"{ty}.png")
+
+    def pyramid(self) -> int:
+        """Скільки зменшених копій є на диску (рівні, завантажені раніше, можуть їх не мати)."""
+        n = 0
+        while os.path.isdir(os.path.join(self.tiles_dir, f"p{n + 1}")):
+            n += 1
+        return n
 
 
 def estimate_bytes(r: GeoRaster) -> int:
@@ -274,35 +283,60 @@ def free_bytes(directory: str) -> int:
     return shutil.disk_usage(d or ".").free
 
 
+def pyramid_depth(width: int, height: int) -> int:
+    """Скільки зменшених удвічі копій будувати (до найменшої ≤ 256 px по більшій стороні)."""
+    n, w = 0, max(width, height)
+    while w > TILE and n < 8:
+        w = (w + 1) // 2
+        n += 1
+    return n
+
+
+def _write_tiles(img: np.ndarray, directory: str, tick) -> None:
+    import cv2
+
+    nx, ny = math.ceil(img.shape[1] / TILE), math.ceil(img.shape[0] / TILE)
+    for tx in range(nx):
+        col = os.path.join(directory, str(tx))
+        for ty in range(ny):
+            tile = img[ty * TILE:(ty + 1) * TILE, tx * TILE:(tx + 1) * TILE]
+            if tile[..., 3].any():
+                if tile.shape[0] != TILE or tile.shape[1] != TILE:          # крайні тайли — доповнити
+                    full = np.zeros((TILE, TILE, 4), np.uint8)
+                    full[:tile.shape[0], :tile.shape[1]] = tile
+                    tile = full
+                os.makedirs(col, exist_ok=True)
+                cv2.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
+            tick()
+
+
 def build_level(r: GeoRaster, level: int, out_dir: str, attribution: str = "",
                 progress: Optional[Callable[[float, str], bool]] = None) -> MapLevel:
-    """Записати карту рівня тайлами в її власному масштабі. progress(частка, текст) → False скасовує
-    (попередня карта рівня залишається)."""
+    """Записати карту рівня тайлами в її власному масштабі, а також зменшені вдвічі, вчетверо … копії
+    (p1, p2 …, зменшення INTER_AREA) — щоб уся карта у вигляді лишалась чіткою, без втрати дрібних
+    підписів. progress(частка, текст) → False скасовує (попередня карта рівня залишається)."""
     import cv2
 
     work = out_dir + ".building"
     if os.path.isdir(work):
         shutil.rmtree(work)
     os.makedirs(work)
-    nx, ny = math.ceil(r.width / TILE), math.ceil(r.height / TILE)
-    total = nx * ny
+    depth = pyramid_depth(r.width, r.height)
+    sizes = [(math.ceil(r.width / 2 ** p), math.ceil(r.height / 2 ** p)) for p in range(depth + 1)]
+    total = sum(math.ceil(w / TILE) * math.ceil(h / TILE) for w, h in sizes)
+    k = [0]
+
+    def tick() -> None:
+        k[0] += 1
+        if progress is not None and (k[0] % 16 == 0 or k[0] == total) and \
+                progress(k[0] / total, f"тайл {k[0]} з {total}") is False:
+            raise Cancelled()
     try:
-        k = 0
-        for tx in range(nx):
-            col = os.path.join(work, str(tx))
-            for ty in range(ny):
-                tile = r.image[ty * TILE:(ty + 1) * TILE, tx * TILE:(tx + 1) * TILE]
-                k += 1
-                if tile[..., 3].any():
-                    if tile.shape[0] != TILE or tile.shape[1] != TILE:      # крайні тайли — доповнити
-                        full = np.zeros((TILE, TILE, 4), np.uint8)
-                        full[:tile.shape[0], :tile.shape[1]] = tile
-                        tile = full
-                    os.makedirs(col, exist_ok=True)
-                    cv2.imwrite(os.path.join(col, f"{ty}.png"), cv2.cvtColor(tile, cv2.COLOR_RGBA2BGRA))
-                if progress is not None and (k % 16 == 0 or k == total) and \
-                        progress(k / total, f"тайл {k} з {total}") is False:
-                    raise Cancelled()
+        _write_tiles(r.image, work, tick)
+        img = r.image
+        for p in range(1, depth + 1):
+            img = cv2.resize(img, sizes[p], interpolation=cv2.INTER_AREA)
+            _write_tiles(img, os.path.join(work, f"p{p}"), tick)
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise

@@ -1,9 +1,10 @@
 """Віджет карти: на кожному кроці зуму — карта свого рівня у власному масштабі файлу.
 
 Рівень 1 — найбільша деталізація, рівень 8 — найменша. «+» (і колесо від себе) веде до рівня 1,
-«−» — до рівня 8. Карта ніколи не збільшується відносно файлу; найменш детальний рівень вписується
-у вигляд цілком. Після кожного кроку зуму центр — середина між камерами (у межах карти). Карта рівня,
-на якій немає жодної камери, показується порожньою. Без карт — сітка на сірому тлі.
+«−» — до рівня 8. На кожному рівні карта показується цілком (як у переглядачі зображень): вона лише
+зменшується, ніколи не збільшується відносно файлу, а для зменшення береться найближча з якісно
+зменшених копій (p1, p2 …), тож дрібні підписи не губляться. Центр — середина між камерами в межах
+карти (карта, менша за вигляд, — посередині). Карта рівня без жодної камери показується порожньою.
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ class MapView(QWidget):
         self.cx, self.cy = mp.lonlat_to_merc(30.52, 50.45)      # центр вигляду, EPSG:3857
         self._drag: Optional[QPointF] = None
         self._cache: "OrderedDict[str, Optional[QImage]]" = OrderedDict()
+        self._pyramid = {}
         self.overlays: List[Callable[[QPainter, "MapView"], None]] = []
         self.attribution = ""
         # координати камер (широта, довгота): центр при зумі і перевірка, чи камери на карті рівня
@@ -46,6 +48,7 @@ class MapView(QWidget):
         current = self.current
         self.levels = sorted(levels, key=lambda lv: -lv.level)
         self._cache.clear()
+        self._pyramid = {}
         self.attribution = next((lv.attribution for lv in self.levels if lv.attribution), "")
         if self.levels:
             if current is not None and any(lv.level == current.level for lv in self.levels):
@@ -114,8 +117,8 @@ class MapView(QWidget):
 
     @property
     def whole(self) -> bool:
-        """Поточний рівень — найменш детальний: карта вписується у вигляд цілком."""
-        return bool(self.levels) and self.step == 0
+        """На кожному рівні карта вписується у вигляд цілком."""
+        return bool(self.levels)
 
     @property
     def steps(self) -> int:
@@ -140,8 +143,8 @@ class MapView(QWidget):
         if cur is None:
             return EMPTY_STEPS[self._empty_step]
         native = cur.res * self.dpr()
-        if self.whole and self.width() > 0 and self.height() > 0:
-            a, b, c, d = cur.bounds                 # уся карта рівня 8 — у вигляді (з полями 3 %)
+        if self.width() > 0 and self.height() > 0:
+            a, b, c, d = cur.bounds                 # уся карта рівня — у вигляді (з полями 3 %)
             return max(native, (c - a) / self.width() * 1.03, (d - b) / self.height() * 1.03)
         return native
 
@@ -174,10 +177,12 @@ class MapView(QWidget):
         if cur is None:
             return f"Карт немає · масштаб {self.index + 1} з {self.steps}"
         kind = ("найбільша деталізація" if self.index == self.steps - 1 else
-                "найменша деталізація, уся карта" if self.whole else "")
+                "найменша деталізація" if self.index == 0 else "")
         tail = "" if self.level_visible else " · камери поза межами карти"
+        shrink = self.res / (cur.res * self.dpr())
+        scale = " · уся карта" + (f", зменшено в {shrink:.1f} раза" if shrink > 1.05 else ", 1:1")
         return (f"Рівень {cur.level}{f' ({kind})' if kind else ''} · {os.path.basename(cur.source_file)} · "
-                f"{cur.ground_res():.2f} м/піксель{tail}")
+                f"{cur.ground_res():.2f} м/піксель{scale}{tail}")
 
     # --- координати ------------------------------------------------------------------------------------------
     def to_screen(self, lat: float, lon: float) -> QPointF:
@@ -212,12 +217,12 @@ class MapView(QWidget):
             self.set_index(self.index + (1 if steps > 0 else -1))      # центр — середина між камерами
 
     # --- тайли ---------------------------------------------------------------------------------------------------
-    def _tile(self, lv: mp.MapLevel, tx: int, ty: int) -> Optional[QImage]:
-        key = f"{lv.level}/{lv.loaded_at}/{tx}/{ty}"
+    def _tile(self, lv: mp.MapLevel, tx: int, ty: int, pl: int = 0) -> Optional[QImage]:
+        key = f"{lv.level}/{lv.loaded_at}/{pl}/{tx}/{ty}"
         if key in self._cache:
             self._cache.move_to_end(key)
             return self._cache[key]
-        path = lv.tile_path(tx, ty)
+        path = lv.tile_path(tx, ty, pl)
         img = QImage(path) if os.path.isfile(path) else None
         if img is not None and img.isNull():
             img = None
@@ -230,15 +235,23 @@ class MapView(QWidget):
         """Тайли рівня, що потрапляють у вигляд. Повертає кількість."""
         r = self.res
         dpr = self.dpr()
-        k = lv.res / r                                  # логічних пікселів на піксель рівня (≤ 1 / dpr)
+        # зменшена копія: найбільша, що ще не дрібніша за фізичний піксель екрана
+        pl = 0
+        if lv.level not in self._pyramid:
+            self._pyramid[lv.level] = lv.pyramid()
+        while pl < self._pyramid[lv.level] and lv.res * 2 ** (pl + 1) <= r * dpr * 1.0001:
+            pl += 1
+        pres = lv.res * 2 ** pl                          # крок пікселя копії
+        pw, ph = math.ceil(lv.width / 2 ** pl), math.ceil(lv.height / 2 ** pl)
+        k = pres / r                                     # логічних пікселів на піксель копії (≤ 1 / dpr)
         size = TILE * k
-        exact = abs(k * dpr - 1.0) < 1e-6               # 1 піксель файлу = 1 фізичний піксель
+        exact = abs(k * dpr - 1.0) < 1e-6               # 1 піксель копії = 1 фізичний піксель
         left = self.cx - self.width() / 2 * r            # межі вигляду в EPSG:3857
         top = self.cy + self.height() / 2 * r
-        tx0 = max(0, int(math.floor((left - lv.x0) / (lv.res * TILE))))
-        ty0 = max(0, int(math.floor((lv.y0 - top) / (lv.res * TILE))))
-        tx1 = min(math.ceil(lv.width / TILE) - 1, int(math.floor((left + self.width() * r - lv.x0) / (lv.res * TILE))))
-        ty1 = min(math.ceil(lv.height / TILE) - 1, int(math.floor((lv.y0 - (top - self.height() * r)) / (lv.res * TILE))))
+        tx0 = max(0, int(math.floor((left - lv.x0) / (pres * TILE))))
+        ty0 = max(0, int(math.floor((lv.y0 - top) / (pres * TILE))))
+        tx1 = min(math.ceil(pw / TILE) - 1, int(math.floor((left + self.width() * r - lv.x0) / (pres * TILE))))
+        ty1 = min(math.ceil(ph / TILE) - 1, int(math.floor((lv.y0 - (top - self.height() * r)) / (pres * TILE))))
         if tx1 < tx0 or ty1 < ty0 or (tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 2500:
             return 0
         n = 0
@@ -249,7 +262,7 @@ class MapView(QWidget):
             p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         for tx in range(tx0, tx1 + 1):
             for ty in range(ty0, ty1 + 1):
-                img = self._tile(lv, tx, ty)
+                img = self._tile(lv, tx, ty, pl)
                 if img is not None:
                     p.drawImage(QRectF(ox + tx * size, oy + ty * size, size, size), img)
                     n += 1

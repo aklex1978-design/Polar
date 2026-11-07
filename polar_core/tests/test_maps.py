@@ -94,6 +94,19 @@ def test_build_level_in_own_scale(sample, tmp_path):
     assert b.native_zoom - a.native_zoom == pytest.approx(2.0, abs=0.01)
 
 
+def test_pyramid_copies(tmp_path):
+    """Зменшені вдвічі копії (INTER_AREA) — щоб уся карта у вигляді була чіткою, як у переглядачі."""
+    img = np.zeros((1000, 1500, 4), np.uint8)
+    img[..., 3] = 255
+    img[:, :750, :3] = 255                                   # ліва половина біла
+    p = write_geotiff(str(tmp_path / "a4.tif"), img, 3.0e6, 6.5e6, 100.0)
+    lv = mp.build_level(mp.read_geotiff(p), 7, str(tmp_path / "maps" / "7"))
+    assert mp.pyramid_depth(1500, 1000) == 3 and lv.pyramid() == 3
+    t = cv2.imread(lv.tile_path(0, 0, 3), cv2.IMREAD_UNCHANGED)        # 1500/8 ≈ 188 × 125 — один тайл
+    assert t.shape == (256, 256, 4) and t[10, 10, 3] == 255 and t[200, 200, 3] == 0
+    assert t[10, 50, 0] == 255 and t[10, 150, 0] == 0                  # межа половин — на місці (≈ 94)
+
+
 def test_cancel_keeps_previous_level(sample, tmp_path):
     r = mp.read_geotiff(sample[0])
     out = str(tmp_path / "maps" / "1")

@@ -2,15 +2,16 @@
 
 Рівень 1 — найбільша деталізація, рівень 8 — найменша (показується вся карта). Вибір файлу для
 рівня одразу завантажує карту цього рівня (хід — у колонці «Стан»). «+» веде до рівня 1, «−» — до 8.
+На кожному рівні карта показується цілком; зменшені копії будуються під час завантаження.
 """
 from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                             QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                             QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from polar_core import maps as mp
 
@@ -75,15 +76,18 @@ class MapSettingsScreen(QWidget):
         self.view = MapView()
         self.view.camera_points = lambda: [(la, lo) for _n, la, lo in self.ctx.maps.camera_points()]
         self.view.overlays.append(draw_camera_points(self.maps.camera_points))
-        v.addWidget(self.view, 1)
+        top = QWidget()
+        tv = QVBoxLayout(top)
+        tv.setContentsMargins(0, 0, 0, 0)
+        tv.addWidget(self.view, 1)
         self.toolbar = MapToolbar(self.view)
         self.toolbar.center_btn.clicked.connect(self.center)
-        v.addWidget(self.toolbar)
+        tv.addWidget(self.toolbar)
 
         box = QGroupBox("Рівні карти")
         bl = QVBoxLayout(box)
         hint = QLabel("На кожному рівні — своя карта GeoTIFF (EPSG:3857 або широта/довгота). Рівень 1 — "
-                      "найбільша деталізація, рівень 8 — найменша (на ньому показується вся карта). Після "
+                      "найбільша деталізація, рівень 8 — найменша; на кожному рівні карта показується цілком. Після "
                       "вибору файлу карта рівня завантажується одразу; «+» веде до рівня 1, «−» — до рівня 8.")
         hint.setWordWrap(True)
         bl.addWidget(hint)
@@ -119,7 +123,7 @@ class MapSettingsScreen(QWidget):
             self.table.setItem(i, 3, QTableWidgetItem(""))
             self.level_edits[lvl] = ed
             self.cancel_btns[lvl] = b3
-        self.table.setMinimumHeight(8 * 30 + 30)
+        self.table.setMinimumHeight(4 * 30 + 30)
         bl.addWidget(self.table)
         row = QHBoxLayout()
         self.osm = QCheckBox("Карти з даних OpenStreetMap — показувати підпис «© OpenStreetMap contributors»")
@@ -129,7 +133,13 @@ class MapSettingsScreen(QWidget):
         self.info = QLabel("")
         row.addWidget(self.info)
         bl.addLayout(row)
-        v.addWidget(box)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)     # межу між картою і таблицею можна тягнути
+        self.splitter.addWidget(top)
+        self.splitter.addWidget(box)
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setCollapsible(0, False)
+        v.addWidget(self.splitter, 1)
         self.message = QLabel("")
         self.message.setWordWrap(True)
         v.addWidget(self.message)
@@ -149,10 +159,13 @@ class MapSettingsScreen(QWidget):
         self.osm.setChecked(s.osm)
         self._loading = False
         # рівні, для яких файл задано, а карти ще немає (напр. після оновлення програми), — завантажити
-        loaded = {lv.level for lv in self.maps.levels()}
+        # а також рівні, завантажені до появи зменшених копій (щоб уся карта лишалась чіткою)
+        loaded = {lv.level: lv for lv in self.maps.levels()}
         for lvl, path in s.level_files.items():
             st = self.maps.status[lvl]
-            if lvl not in loaded and not (st.running or st.queued or st.error) and os.path.isfile(path):
+            lv = loaded.get(lvl)
+            stale = lv is not None and lv.pyramid() == 0 and mp.pyramid_depth(lv.width, lv.height) > 0
+            if (lv is None or stale) and not (st.running or st.queued or st.error) and os.path.isfile(path):
                 self.maps.load_level(lvl, path)
         self.center()
         self._show_levels()

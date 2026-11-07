@@ -586,7 +586,7 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     wait(0.1)
     assert "over.tif" in m.toolbar.label.text() and not m.toolbar.minus.isEnabled()
     assert "уся карта" in m.toolbar.label.text()
-    a, b, c, d = m.view.current.bounds                                     # найменш детальний — уся карта у вигляді
+    a, b, c, d = m.view.current.bounds                                     # уся карта рівня — у вигляді
     for x, y in ((a, b), (c, d)):
         sx = m.view.width() / 2 + (x - m.view.cx) / m.view.res
         sy = m.view.height() / 2 - (y - m.view.cy) / m.view.res
@@ -598,7 +598,7 @@ def test_map_settings_levels_and_zoom(win, tmp_path):
     wait(0.1)
     pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
     assert 0 < pt.x() < m.view.width() and _px(m.view, pt.x(), pt.y()) == (217, 217, 212)
-    assert m.view.res == pytest.approx(m.view.current.res * m.view.dpr())  # піксель файлу = фізичний піксель
+    assert m.view.res >= m.view.current.res * m.view.dpr() * 0.9999       # карта не збільшується
     # файл задано, а карти немає (після оновлення програми) — при вході на екран рівень завантажується сам
     with win.ctx.control._db_lock:
         from polar_core import maps as mp
@@ -631,61 +631,30 @@ def test_whole_map_on_least_detailed_level(app):
     assert v.current.level == 1 and (v.cx, v.cy) == pytest.approx(mp.lonlat_to_merc(cam[0], cam[1]))
 
 
-def test_center_between_cameras_and_cameras_outside(app):
-    """При зумі центр — середина між камерами, у межах карти; рівень без камер — порожній."""
+def test_every_level_whole_and_cameras_outside(app):
+    """Кожен рівень — уся карта у вигляді, без збільшення; рівень без камер — порожній."""
     from polar_app.ui.map_view import MapView
     from polar_core import maps as mp
     v = MapView()
-    v.resize(400, 300)
-    lv1 = mp.MapLevel(1, 2.0, 0.0, 6.0e6, 2000, 1500, "detail.tif", "")           # 4 × 3 км
-    lv2 = mp.MapLevel(2, 20.0, -20000.0, 6.02e6, 3000, 2500, "over.tif", "")      # 60 × 50 км
+    v.resize(500, 350)
+    lv1 = mp.MapLevel(1, 2.0, 0.0, 6.0e6, 200, 150, "small.tif", "")             # менша за вигляд
+    lv2 = mp.MapLevel(2, 20.0, -20000.0, 6.02e6, 3507, 2480, "a4.tif", "")       # А4 300 dpi — більша
     far = mp.MapLevel(3, 50.0, 1.0e6, 7.0e6, 1000, 1000, "elsewhere.tif", "")     # без камер
-    c1, c2 = mp.merc_to_lonlat(1000.0, 6.0e6 - 1000.0), mp.merc_to_lonlat(2000.0, 6.0e6 - 2000.0)
+    c1, c2 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0), mp.merc_to_lonlat(300.0, 6.0e6 - 200.0)
     v.camera_points = lambda: [(c1[1], c1[0]), (c2[1], c2[0])]
     v.set_levels([lv1, lv2, far])
     assert v.current.level == 1 and v.level_visible
-    assert (v.cx, v.cy) == pytest.approx((1500.0, 6.0e6 - 1500.0))                # середина між камерами
+    assert v.res == pytest.approx(2.0 * v.dpr())                                  # 1:1, не збільшено
+    assert (v.cx, v.cy) == pytest.approx((200.0, 6.0e6 - 150.0))                  # менша карта — посередині
     v.zoom_out()
-    assert v.current.level == 2 and (v.cx, v.cy) == pytest.approx((1500.0, 6.0e6 - 1500.0))
+    assert v.current.level == 2
+    a, b, c, d = lv2.bounds
+    assert v.res == pytest.approx(max(20.0 * v.dpr(), (c - a) / v.width() * 1.03, (d - b) / v.height() * 1.03))
+    assert (v.cx, v.cy) == pytest.approx(((a + c) / 2, (b + d) / 2))              # уся карта
+    assert "зменшено" in v.level_text
     v.zoom_out()
     assert v.current.level == 3 and not v.level_visible and "поза межами" in v.level_text
-    assert v.grab().toImage().pixelColor(5, 150).red() in (217, 196)                 # порожньо
-    v.zoom_in()
-    v.zoom_in()
-    # середина біля краю карти — вигляд зсувається, щоб лишатися на карті
-    c3 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0)
-    v.camera_points = lambda: [(c3[1], c3[0])]
-    v.recenter()
-    assert v.cx == pytest.approx(v.width() / 2 * v.res) and v.cy == pytest.approx(6.0e6 - v.height() / 2 * v.res)
-
-
-def test_map_pixels_are_file_pixels(win, tmp_path):
-    """Чіткість: кожен піксель файлу — окремий фізичний піксель екрана (за будь-якого масштабу Windows)."""
-    import numpy as np
-    sys_path = os.path.join(os.path.dirname(__file__), "..", "..", "polar_core", "tests")
-    import sys
-    sys.path.insert(0, sys_path)
-    from geotiff_util import write_geotiff
-    from polar_core import maps as mp
-    rec = win.ctx.records()[0]
-    x, y = mp.lonlat_to_merc(rec.longitude, rec.latitude)
-    img = np.zeros((300, 400, 4), np.uint8)
-    img[..., 3] = 255
-    img[:, ::2, :3] = 255                                 # вертикальні смуги через піксель: біла, чорна, …
-    path = write_geotiff(str(tmp_path / "stripes.tif"), img, x - 400, y + 300, 2.0)
-    win.stack.setCurrentWidget(win.map_settings)
-    m = win.map_settings
-    m.level_edits[1].setText(path)
-    m.level_edits[1].editingFinished.emit()
-    assert wait(30, lambda: not win.ctx.maps.busy() and m.view.levels)
-    wait(0.2)
-    shot = m.view.grab().toImage()
-    k = shot.devicePixelRatio()
-    pt = m.view.to_screen(rec.latitude, rec.longitude)
-    row = int(pt.y() * k) - 40
-    vals = [shot.pixelColor(int(pt.x() * k) - 60 + i, row).red() for i in range(20)]
-    assert all(v in (0, 255) for v in vals) and len(set(vals)) == 2, vals    # без розмиття — лише 0 і 255
-    assert all(vals[i] != vals[i + 1] for i in range(19)), vals              # смуги через один піксель
+    assert v.grab().toImage().pixelColor(5, 150).red() in (217, 196)               # порожньо
 
 
 def test_level_order_warning():
