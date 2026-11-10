@@ -47,6 +47,16 @@ class DetectionSettings:
             e.append("критерій точності — 0–10°")
         if self.hold_s < 0:
             e.append("час утримання — 0 або більше")
+        if self.max_range_m <= 0:
+            e.append("максимальна дальність — більше 0")
+        if not 0 < self.k_tolerance <= 100:
+            e.append("коефіцієнт допуску k — 0–100")
+        if self.sync_window_ms < 0:
+            e.append("вікно синхронізації — 0 (тривалість кадру) або більше")
+        if not 0 <= self.min_ray_angle_deg < 90:
+            e.append("мінімальний кут між променями — 0–90°")
+        if not 1 <= self.confirm_frames <= 1000:
+            e.append("кадрів для підтвердження пари — 1–1000")
         return e
 
 
