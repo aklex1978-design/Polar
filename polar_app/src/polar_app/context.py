@@ -30,6 +30,9 @@ class AppContext:
         from .map_service import MapService
 
         self.maps = MapService(self)
+        from .settings_service import SettingsService
+
+        self.settings = SettingsService(self)
         # ТЗ: після завершення Навчання система переходить у режим Слідкування
         self.learning.on_finished = lambda _names: threading.Thread(
             target=self._after_learning, daemon=True).start()

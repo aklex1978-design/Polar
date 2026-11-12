@@ -755,3 +755,79 @@ def test_work_map_demo_target(win):
     assert wait(15, lambda: abs((win.ctx.control.status(r0.name).elevation_deg or 0) - el) < 0.5)
     wm.demo_btn.click()
     assert wm.demo_target is None and wm.demo_info.text() == ""
+
+
+def test_settings_menu_and_general(win, tmp_path, monkeypatch):
+    """«Налаштування»: Загальні, Виявлення, ROS 2, Карта; «Загальні» — база, шлях до панорам, резервна копія."""
+    monkeypatch.setenv("POLAR_CONFIG_DIR", str(tmp_path / "config"))
+    menus = {a.text(): a for a in win.menuBar().actions()}
+    assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта"]
+    assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Камери", "Режим роботи", "Журнал"]
+    win.stack.setCurrentWidget(win.general)
+    g = win.general
+    assert g.db_file.text() == win.ctx.settings.db_path() and g.pano_dir.text() == ""
+    assert "Зараз:" in g.pano_hint.text()
+    g.pano_dir.setText(str(tmp_path / "Панорами"))
+    g.save_btn.click()
+    assert "Збережено" in g.message.text() and win.ctx.learning.panorama_dir() == str(tmp_path / "Панорами")
+    assert g.backup(str(tmp_path / "copy.sqlite")) and os.path.isfile(tmp_path / "copy.sqlite")
+    assert "ключ паролів" in g.message.text()
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    assert g.choose_database(create=True, path=str(tmp_path / "нова.sqlite"))
+    from polar_app import app_config
+    assert app_config.db_path() == str(tmp_path / "нова.sqlite") and "Наступний запуск" in g.message.text()
+    assert "База:" in win.db_label.text()
+
+
+def test_detection_and_ros_settings_screens(win):
+    win.stack.setCurrentWidget(win.detection_settings)
+    d = win.detection_settings
+    assert d.fields["k_tolerance"].value() == 2.0 and d.fields["confirm_frames"].value() == 3
+    d.fields["k_tolerance"].setValue(3.0)
+    d.fields["confirm_frames"].setValue(4)
+    d.save_btn.click()
+    assert "Збережено" in d.message.text()
+    s = win.ctx.settings.detection()
+    assert s.k_tolerance == 3.0 and s.confirm_frames == 4
+    d.fields["k_tolerance"].setValue(5.0)
+    d.revert_btn.click()                                                  # «Скасувати зміни»
+    assert d.fields["k_tolerance"].value() == 3.0
+    win.stack.setCurrentWidget(win.ros_settings)
+    r = win.ros_settings
+    assert r.prefix.text() == "/polar" and r.rmw.currentData() == "rmw_fastrtps_cpp"
+    r.rate.setValue(10.0)
+    r.save_btn.click()
+    assert "Збережено" in r.message.text() and win.ctx.control.ros.state_rate_hz == 10.0
+    r.domain.setValue(7)
+    r.save_btn.click()
+    assert "Перезапустіть програму" in r.message.text()
+    r.discovery_mode.setCurrentIndex(1)
+    r.discovery.setText("без порту")
+    r.save_btn.click()
+    assert "адреса:порт" in r.message.text()
+
+
+def test_events_screen_status_bar_and_error_dialog(win, tmp_path):
+    """«Робота / Журнал»: фільтри, нові події, експорт; рядок стану — останні помилки; помилка — вікно."""
+    ctx = win.ctx
+    cid = ctx.records()[0].id
+    with ctx.control._db_lock:
+        with ctx.conn:
+            ctx.conn.execute("INSERT INTO events (camera_id, kind, message) VALUES (?, 'motion', 'новий обʼєкт')", (cid,))
+    win.stack.setCurrentWidget(win.events)
+    e = win.events
+    assert e.table.rowCount() >= 1 and e.table.item(0, 2).text() == "Рух"
+    with ctx.control._db_lock:
+        with ctx.conn:
+            ctx.conn.execute("INSERT INTO events (camera_id, kind, message) VALUES (?, 'stream_lost', 'потік втрачено')",
+                             (cid,))
+    assert wait(3, lambda: e.table.item(0, 2).text() == "Потік втрачено")         # дописується сама
+    assert wait(3, lambda: "Потік втрачено" in win.statusBar().currentMessage())  # і в рядку стану
+    e.kind.setCurrentIndex(e.kind.findData("motion"))
+    assert all(e.table.item(r, 2).text() == "Рух" for r in range(e.table.rowCount()))
+    assert e.export(str(tmp_path / "events.csv")) and "Записано" in e.message.text()
+    win.error_signal.emit("RuntimeError: тест", "Traceback …")
+    wait(0.2)
+    assert win.last_error_box.text() == "RuntimeError: тест" and "polar.log" in win.last_error_box.informativeText()
+    win.last_error_box.close()
