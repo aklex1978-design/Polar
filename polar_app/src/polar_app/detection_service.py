@@ -49,6 +49,7 @@ class DetectionService:
         self._threads: Dict[str, threading.Thread] = {}
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._run_lock = threading.RLock()
         self._acquired: List[str] = []
         self.targets = TargetService(ctx, clock)       # координати цілей з обʼєктів усіх камер
 
@@ -62,6 +63,10 @@ class DetectionService:
 
     def start(self) -> List[str]:
         """Увімкнути Слідкування для камер, що мають панораму. Повертає, які камери стежать."""
+        with self._run_lock:            # одночасні виклики (напр. кілька камер завершили Навчання разом)
+            return self._start()
+
+    def _start(self) -> List[str]:
         if self.active:
             return list(self._threads)
         with self.ctx.control._db_lock:
@@ -89,6 +94,10 @@ class DetectionService:
         return names
 
     def stop(self) -> None:
+        with self._run_lock:
+            self._stop_all()
+
+    def _stop_all(self) -> None:
         self._stop.set()
         for t in list(self._threads.values()):
             t.join(5)

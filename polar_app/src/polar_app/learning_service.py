@@ -58,6 +58,7 @@ class LearningService:
         self._snaps: Dict[str, GridSnapshots] = {}
         self._step_target: Dict[str, tuple] = {}     # остання ціль кнопок кроку: (азимут, кут місця, час)
         self.on_finished: Optional[Callable[[List[str]], None]] = None   # усі камери завершили Навчання
+        self._notified = False
 
     # --- панорами ------------------------------------------------------------------------
     def panorama_dir(self) -> str:
@@ -134,6 +135,7 @@ class LearningService:
                 self._status[rec.name] = LearningStatus(ERROR, message="немає звʼязку з камерою")
                 continue
             stop = threading.Event()
+            self._notified = False
             self._stop[rec.name] = stop
             self._status[rec.name] = LearningStatus(RUNNING, message="підготовка")
             self.ctx.control.set_learning(rec.name, True)       # ручне керування блокується одразу
@@ -316,9 +318,10 @@ class LearningService:
 
     def _notify_if_all_done(self) -> None:
         with self._lock:
-            if any(s.state == RUNNING for s in self._status.values()):
+            if any(s.state == RUNNING for s in self._status.values()) or self._notified:
                 return
             done = [n for n, s in self._status.items() if s.state == DONE]
+            self._notified = True                       # одне повідомлення на запуск Навчання
         if done and self.on_finished:
             self.on_finished(done)
 

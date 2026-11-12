@@ -528,3 +528,230 @@ def test_work_screen_targets_table(win):
     assert w.targets.item(2, 0).text() == recs[2].name and w.targets.item(2, 3).text() == ""
     win.ctx.detection.mode.stop()
     svc.stop()
+
+
+def _kyiv_maps(d):
+    """Оглядовий і детальний (у 4 рази дрібніший) GeoTIFF навколо демо-камер (Київ)."""
+    import math
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "polar_core", "tests"))
+    from geotiff_util import area_raster, write_geotiff
+    r = 6.9 / math.cos(math.radians(50.45))
+    over, ox, oy = area_raster(50.462, 30.505, 50.438, 30.545, r, seed=1)
+    over[..., :3] = (40, 160, 40)                                     # однотонна: легко перевірити пікселі
+    det, dx, dy = area_raster(50.4545, 30.520, 50.4465, 30.533, r / 4, seed=2)
+    det[..., :3] = (200, 60, 200)
+    return (write_geotiff(os.path.join(d, "over.tif"), over, ox, oy, r, description="OpenStreetMap"),
+            write_geotiff(os.path.join(d, "detail.tif"), det, dx, dy, r / 4))
+
+
+def _px(view, x, y):
+    """Колір пікселя віджета в логічних координатах (з урахуванням масштабу екрана Windows)."""
+    img = view.grab().toImage()
+    k = img.devicePixelRatio()
+    c = img.pixelColor(int(x * k), int(y * k))
+    return c.red(), c.green(), c.blue()
+
+
+def test_map_settings_levels_and_zoom(win, tmp_path):
+    """«Налаштування / Карта»: на кожному рівні своя карта; вибір файлу одразу завантажує рівень;
+    зум перемикає рівні й показує карту відповідного рівня."""
+    over, det = _kyiv_maps(str(tmp_path))
+    menus = {a.text(): a for a in win.menuBar().actions()}
+    assert "Налаштування" in menus and "Карта" in [a.text() for a in menus["Налаштування"].menu().actions()]
+    assert [a.text() for a in menus["Робота"].menu().actions()][0] == "Карта"
+    win.stack.setCurrentWidget(win.map_settings)
+    m = win.map_settings
+    assert not hasattr(m, "main_file") and not hasattr(m, "load_btn")      # блоку завантаження немає
+    m.level_edits[1].setText(det)                                          # номер рівня — довільний
+    m.level_edits[1].editingFinished.emit()
+    m.level_edits[4].setText(over)
+    m.level_edits[4].editingFinished.emit()
+    ok = wait(30, lambda: not win.ctx.maps.busy() and "завантажено" in m.message.text().lower())
+    assert ok, (m.message.text(), win.ctx.maps.status)
+    assert "м/піксель" in m.table.item(0, 3).text() and "м/піксель" in m.table.item(3, 3).text()
+    assert m.osm.isChecked() and m.view.attribution == "© OpenStreetMap contributors"
+    assert [lv.level for lv in m.view.levels] == [4, 1]                    # від оглядового до детального
+    rec = win.ctx.records()[0]
+    m.view.resize(600, 400)
+    m.view.center_on(rec.latitude, rec.longitude)
+    m.view.set_index(1)
+    wait(0.2)
+    assert "detail.tif" in m.toolbar.label.text() and not m.toolbar.plus.isEnabled()
+    assert "Рівень 1 (найбільша деталізація)" in m.toolbar.label.text()
+    assert m.table.item(0, 0).text().startswith("1 — найбільша") and m.table.item(7, 0).text().startswith("8 — найменша")
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    assert _px(m.view, pt.x() + 40, pt.y() + 40) == (200, 60, 200)       # детальна карта
+    m.toolbar.minus.click()
+    wait(0.1)
+    assert "over.tif" in m.toolbar.label.text() and not m.toolbar.minus.isEnabled()
+    assert "уся карта" in m.toolbar.label.text()
+    a, b, c, d = m.view.current.bounds                                     # уся карта рівня — у вигляді
+    for x, y in ((a, b), (c, d)):
+        sx = m.view.width() / 2 + (x - m.view.cx) / m.view.res
+        sy = m.view.height() / 2 - (y - m.view.cy) / m.view.res
+        assert -1 <= sx <= m.view.width() + 1 and -1 <= sy <= m.view.height() + 1
+    sx = m.view.width() / 2 + (a - m.view.cx) / m.view.res                 # лівий верхній кут карти —
+    sy = m.view.height() / 2 - (d - m.view.cy) / m.view.res                # далеко від трикутників камер
+    assert _px(m.view, sx + 6, sy + 6) == (40, 160, 40)                    # оглядова карта
+    # на детальному рівні поза детальною картою — порожньо (оглядова не збільшується під нею)
+    m.toolbar.plus.click()
+    wait(0.1)
+    pt = m.view.to_screen(rec.latitude, 30.5190)                           # на захід від детальної карти
+    assert 0 < pt.x() < m.view.width() and _px(m.view, pt.x(), pt.y()) == (217, 217, 212)
+    assert m.view.res >= m.view.current.res * m.view.dpr() * 0.9999       # карта не збільшується
+    # файл задано, а карти немає (після оновлення програми) — при вході на екран рівень завантажується сам
+    with win.ctx.control._db_lock:
+        from polar_core import maps as mp
+        mp.delete_level(win.ctx.conn, 4)
+    win.stack.setCurrentWidget(win.work)
+    win.stack.setCurrentWidget(m)
+    assert wait(30, lambda: not win.ctx.maps.busy() and 4 in {lv.level for lv in win.ctx.maps.levels()})
+    # прибрати рівень
+    m.remove(1)
+    assert [lv.level for lv in m.view.levels] == [4] and m.level_edits[1].text() == ""
+
+
+def test_whole_map_on_least_detailed_level(app):
+    """Рівень 8 (найменш детальний): велика карта вписується у вигляд цілком; «+» — назад до камер."""
+    from polar_app.ui.map_view import MapView
+    from polar_core import maps as mp
+    v = MapView()
+    v.resize(500, 350)
+    big = mp.MapLevel(8, 300.0, 2.0e6, 7.0e6, 5000, 3500, "Ukraine.tiff", "")   # 1500 × 1050 км
+    small = mp.MapLevel(1, 2.0, 3.2e6, 6.5e6, 800, 600, "Вереси1.tiff", "")
+    cam = mp.merc_to_lonlat(3.2e6 + 800, 6.5e6 - 600)
+    v.camera_points = lambda: [(cam[1], cam[0])]
+    v.set_levels([small, big])
+    assert [lv.level for lv in v.levels] == [8, 1] and v.current.level == 1
+    v.zoom_out()
+    assert v.current.level == 8 and v.whole
+    assert v.res == pytest.approx(max(300.0 * v.dpr(), 300.0 * 5000 / v.width() * 1.03, 300.0 * 3500 / v.height() * 1.03))
+    assert (v.cx, v.cy) == pytest.approx((2.0e6 + 750000, 7.0e6 - 525000))       # середина карти
+    v.zoom_in()
+    assert v.current.level == 1 and (v.cx, v.cy) == pytest.approx(mp.lonlat_to_merc(cam[0], cam[1]))
+
+
+def test_every_level_whole_and_cameras_outside(app):
+    """Кожен рівень — уся карта у вигляді, без збільшення; рівень без камер — порожній."""
+    from polar_app.ui.map_view import MapView
+    from polar_core import maps as mp
+    v = MapView()
+    v.resize(500, 350)
+    lv1 = mp.MapLevel(1, 2.0, 0.0, 6.0e6, 200, 150, "small.tif", "")             # менша за вигляд
+    lv2 = mp.MapLevel(2, 20.0, -20000.0, 6.02e6, 3507, 2480, "a4.tif", "")       # А4 300 dpi — більша
+    far = mp.MapLevel(3, 50.0, 1.0e6, 7.0e6, 1000, 1000, "elsewhere.tif", "")     # без камер
+    c1, c2 = mp.merc_to_lonlat(100.0, 6.0e6 - 100.0), mp.merc_to_lonlat(300.0, 6.0e6 - 200.0)
+    v.camera_points = lambda: [(c1[1], c1[0]), (c2[1], c2[0])]
+    v.set_levels([lv1, lv2, far])
+    assert v.current.level == 1 and v.level_visible
+    assert v.res == pytest.approx(2.0 * v.dpr())                                  # 1:1, не збільшено
+    assert (v.cx, v.cy) == pytest.approx((200.0, 6.0e6 - 150.0))                  # менша карта — посередині
+    v.zoom_out()
+    assert v.current.level == 2
+    a, b, c, d = lv2.bounds
+    assert v.res == pytest.approx(max(20.0 * v.dpr(), (c - a) / v.width() * 1.03, (d - b) / v.height() * 1.03))
+    assert (v.cx, v.cy) == pytest.approx(((a + c) / 2, (b + d) / 2))              # уся карта
+    assert "зменшено" in v.level_text
+    v.zoom_out()
+    assert v.current.level == 3 and not v.level_visible and "поза межами" in v.level_text
+    assert v.grab().toImage().pixelColor(5, 150).red() in (217, 196)               # порожньо
+
+
+def test_level_order_warning():
+    from polar_app.ui.map_settings import order_warnings
+    from polar_core import maps as mp
+    fine = mp.MapLevel(2, 2.0, 0, 0, 10, 10, "a", "")
+    coarse = mp.MapLevel(5, 50.0, 0, 0, 10, 10, "b", "")
+    assert order_warnings([fine, coarse]) == {}
+    bad = order_warnings([mp.MapLevel(2, 50.0, 0, 0, 10, 10, "b", ""), mp.MapLevel(5, 2.0, 0, 0, 10, 10, "a", "")])
+    assert 2 in bad and "менш детальна, ніж рівень 5" in bad[2]
+
+
+def test_work_map_camera_triangles(win, tmp_path):
+    """«Робота / Карта»: трикутник з вершиною в камері, кут = HFOV, напрям — азимут, висота 70 px."""
+    import math
+    from PyQt6.QtCore import QPointF
+
+    from polar_app.ui.work_map import triangle
+    tri = triangle(QPointF(100, 100), 90.0, 60.0)                  # на схід, HFOV 60°
+    a, b, c = tri[0], tri[1], tri[2]
+    assert (a.x(), a.y()) == (100, 100)
+    assert (b.x() + c.x()) / 2 == pytest.approx(170.0) and (b.y() + c.y()) / 2 == pytest.approx(100.0)
+    assert math.degrees(math.atan2(abs(b.y() - c.y()) / 2, 70)) == pytest.approx(30.0)
+    win.stack.setCurrentWidget(win.work_map)
+    wm = win.work_map
+    assert wait(5, lambda: win.ctx.control.status("Камера 1").link_ok)
+    win.ctx.control.go_to("Камера 1", 90.0, 10.0)                   # азимут від півночі 90°
+    assert wait(10, lambda: abs((win.ctx.control.status("Камера 1").azimuth_deg or 0) - 90.0) < 0.5)
+    rec = win.ctx.records()[0]
+    wm.view.resize(600, 400)
+    wm.view.center_on(rec.latitude, rec.longitude)
+    wait(0.3)
+    pt = wm.view.to_screen(rec.latitude, rec.longitude)
+    ir, _ig, ib = _px(wm.view, pt.x() + 45, pt.y())                   # усередині трикутника, на схід
+    orr, _og, ob = _px(wm.view, pt.x(), pt.y() - 45)                   # на північ — поза трикутником
+    assert ib > ir + 30 and abs(ob - orr) < 20
+
+
+def test_settings_map_shows_triangles(win):
+    """«Налаштування / Карта» теж показує камери трикутниками з напрямом (не крапками)."""
+    win.stack.setCurrentWidget(win.map_settings)
+    m = win.map_settings
+    assert wait(5, lambda: win.ctx.control.status("Камера 1").link_ok)
+    win.ctx.control.go_to("Камера 1", 90.0, 10.0)                   # на схід
+    assert wait(10, lambda: abs((win.ctx.control.status("Камера 1").azimuth_deg or 0) - 90.0) < 0.5)
+    rec = win.ctx.records()[0]
+    wait(0.4)
+    pt = m.view.to_screen(rec.latitude, rec.longitude)
+    ir, _ig, ib = _px(m.view, pt.x() + 45, pt.y())                    # усередині трикутника, на схід
+    orr, _og, ob = _px(m.view, pt.x(), pt.y() - 45)                   # на північ — поза ним
+    assert ib > ir + 30 and abs(ob - orr) < 20
+
+
+def test_work_map_demo_target(win):
+    """«Робота / Карта» → «Демо»: правий клік ставить ціль на середній висоті камер, камери
+    повертаються центром на неї."""
+    from PyQt6.QtCore import QPoint, Qt
+    from PyQt6.QtTest import QTest
+
+    from polar_core.geo import GeoPoint, LocalFrame, bearing_elevation
+    win.stack.setCurrentWidget(win.work_map)
+    wm = win.work_map
+    recs = win.ctx.records()
+    assert wait(5, lambda: all(win.ctx.control.status(r.name).link_ok for r in recs))
+    wm.view.right_clicked.emit(50.45, 30.52)                          # без «Демо» — нічого
+    assert wm.demo_target is None
+    wm.demo_btn.click()
+    assert wm.demo_btn.isChecked() and "правою кнопкою" in wm.demo_info.text()
+    # правий клік мишею по точці на схід від камер
+    lat, lon = 50.4505, 30.5400
+    pt = wm.view.to_screen(lat, lon)
+    QTest.mouseClick(wm.view, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier,
+                     QPoint(int(pt.x()), int(pt.y())))
+    assert wm.demo_target is not None
+    g = wm.demo_target
+    cam_alt = sum(r.altitude_m for r in recs) / len(recs)
+    assert g.altitude_m == pytest.approx(cam_alt + 100.0)                # за замовчуванням +100 м над камерами
+    assert abs(g.latitude - lat) < 0.001 and abs(g.longitude - lon) < 0.001
+    assert len(wm.demo_aims) == len(recs) and "азимут" in wm.demo_info.text()
+    frame = LocalFrame(g)
+    for r in recs:
+        az, el, _d = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), g)
+        assert wait(15, lambda r=r, az=az: abs(((win.ctx.control.status(r.name).azimuth_deg or 0) - az + 180) % 360
+                                               - 180) < 0.5), (r.name, az, win.ctx.control.status(r.name))
+    assert all(e > 0.5 for _n, _a, e, _d in wm.demo_aims)                 # ціль у повітрі — кут місця > 0
+    # зміна висоти одразу перенацілює камери; перемикач способу відліку зберігає висоту цілі
+    wm.demo_alt.setValue(250.0)
+    assert wm.demo_target.altitude_m == pytest.approx(cam_alt + 250.0)
+    wm.demo_alt_mode.setCurrentIndex(1)
+    assert wm.demo_alt.value() == pytest.approx(cam_alt + 250.0)
+    assert wm.demo_target.altitude_m == pytest.approx(cam_alt + 250.0)
+    wm.demo_alt.setValue(500.0)                                          # над рівнем моря
+    assert wm.demo_target.altitude_m == pytest.approx(500.0) and "500.0 м над рівнем моря" in wm.demo_info.text()
+    r0 = recs[0]
+    _az, el, _d = bearing_elevation(LocalFrame(wm.demo_target), GeoPoint(r0.latitude, r0.longitude, r0.altitude_m),
+                                    wm.demo_target)
+    assert wait(15, lambda: abs((win.ctx.control.status(r0.name).elevation_deg or 0) - el) < 0.5)
+    wm.demo_btn.click()
+    assert wm.demo_target is None and wm.demo_info.text() == ""
