@@ -140,6 +140,25 @@ MIGRATIONS = [
     ALTER TABLE calibration ADD COLUMN frame_h INTEGER;
     ALTER TABLE calibration ADD COLUMN placement_error_deg REAL;
     """,
+    # 6 — етап 7: рівні карти — зум вебкарти, джерело рівня, межі ділянки (EPSG:3857), тайли, підпис джерела
+    """
+    ALTER TABLE map_levels ADD COLUMN web_zoom INTEGER;
+    ALTER TABLE map_levels ADD COLUMN state TEXT NOT NULL DEFAULT 'none';
+    ALTER TABLE map_levels ADD COLUMN source_level INTEGER;
+    ALTER TABLE map_levels ADD COLUMN min_x REAL;
+    ALTER TABLE map_levels ADD COLUMN min_y REAL;
+    ALTER TABLE map_levels ADD COLUMN max_x REAL;
+    ALTER TABLE map_levels ADD COLUMN max_y REAL;
+    ALTER TABLE map_levels ADD COLUMN tiles_dir TEXT;
+    ALTER TABLE map_levels ADD COLUMN attribution TEXT NOT NULL DEFAULT '';
+    ALTER TABLE map_levels ADD COLUMN warning TEXT NOT NULL DEFAULT '';
+    """,
+    # 7 — рівень карти = власний файл у власному масштабі (тайли в сітці пікселів файлу); рівні,
+    # побудовані за сіткою вебкарти, несумісні — їх треба завантажити наново
+    """
+    DELETE FROM map_levels;
+    DELETE FROM settings WHERE key IN ('map.main_file', 'map.base_zoom');
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

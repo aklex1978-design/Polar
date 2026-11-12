@@ -16,6 +16,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from . import imageio
+
 from .projection import CameraModel
 
 DEFAULT_MAX_PX_PER_DEG = 16.0
@@ -142,9 +144,9 @@ class Panorama:
 
         os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
         base, _ext = os.path.splitext(path)
-        if not cv2.imwrite(path, self.image):
+        if not imageio.imwrite(path, self.image):
             raise IOError(f"не вдалося записати {path}")
-        cv2.imwrite(base + ".coverage.png", (self.covered() * 255).astype(np.uint8))
+        imageio.imwrite(base + ".coverage.png", (self.covered() * 255).astype(np.uint8))
         with open(base + ".json", "w", encoding="utf-8") as fh:
             json.dump({"px_per_deg": self.k, "width": self.width, "height": self.height,
                        "coverage": self.coverage()}, fh)
@@ -157,11 +159,11 @@ class Panorama:
         with open(base + ".json", encoding="utf-8") as fh:
             meta = json.load(fh)
         p = cls(meta["px_per_deg"])
-        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        img = imageio.imread(path, cv2.IMREAD_COLOR)
         if img is None or img.shape[:2] != (p.height, p.width):
             raise IOError(f"файл панорами {path} пошкоджено або має інший розмір")
         p.image = img
-        cov = cv2.imread(base + ".coverage.png", cv2.IMREAD_GRAYSCALE)
+        cov = imageio.imread(base + ".coverage.png", cv2.IMREAD_GRAYSCALE)
         p.weight = (cov > 0).astype(np.float32) if cov is not None else (img.max(axis=2) > 0).astype(np.float32)
         return p
 
