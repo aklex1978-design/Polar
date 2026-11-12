@@ -1,0 +1,17 @@
+# MediaMTX на Raspberry Pi камери Polar: RTSP-сервер на порту 8554.
+# Потік публікує polar-video.sh (ffmpeg); сервер Polar читає rtsp://<адреса Pi>:8554/<RTSP_PATH>.
+logLevel: info
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]          # TCP — без втрат пакетів у навантаженій мережі
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+
+# __RTSP_PATH__ замінюється на RTSP_PATH з /etc/polar/polar.env під час запуску служби polar-video
+paths:
+  __RTSP_PATH__:
+    # джерело — ffmpeg з перетворювача; перезапускається, якщо впаде
+    runOnInit: /opt/polar/polar-video.sh
+    runOnInitRestart: yes
