@@ -25,9 +25,31 @@ for i in $(seq 1 30); do                     # перетворювач може
 done
 [ -e "$DEV" ] || { echo "немає пристрою $DEV — перевірте перетворювач і VIDEO_DEVICE" >&2; exit 1; }
 
-# стандарт і вхід (не всі перетворювачі це підтримують — тоді лише попередження)
-v4l2-ctl -d "$DEV" --set-standard="$V4L_STD" >/dev/null 2>&1 || echo "попередження: стандарт $V4L_STD не встановлено"
+# Стандарт (PAL/NTSC) задається лише перетворювачам, що його підтримують (usbtv, stk1160, em28xx).
+# UVC-перетворювачі (MacroSilicon MS210x тощо) визначають сигнал самі — для них стандарт не передається.
+STD_ARGS=()
+if v4l2-ctl -d "$DEV" --get-standard >/dev/null 2>&1; then
+  v4l2-ctl -d "$DEV" --set-standard="$V4L_STD" >/dev/null 2>&1 || echo "попередження: стандарт $V4L_STD не встановлено"
+  STD_ARGS=(-standard "$V4L_STD")
+else
+  echo "перетворювач без вибору стандарту (UVC) — PAL/NTSC визначає сам"
+fi
 v4l2-ctl -d "$DEV" --set-input="$INPUT" >/dev/null 2>&1 || echo "попередження: вхід $INPUT не встановлено"
+
+# формат і розмір: з тих, що перетворювач справді віддає (UVC може мати інший набір розмірів)
+FORMATS=$(v4l2-ctl -d "$DEV" --list-formats-ext 2>/dev/null || true)
+FMT_ARGS=()
+if echo "$FORMATS" | grep -q "'YUYV'"; then
+  FMT_ARGS=(-input_format yuyv422)           # без стискання — краще для деінтерлейсингу і детектора
+elif echo "$FORMATS" | grep -q "'MJPG'"; then
+  FMT_ARGS=(-input_format mjpeg)
+fi
+if [ -n "$FORMATS" ] && ! echo "$FORMATS" | grep -q "Size: Discrete $SIZE"; then
+  for alt in 720x576 720x480 640x480; do
+    if echo "$FORMATS" | grep -q "Size: Discrete $alt"; then SIZE=$alt; break; fi
+  done
+  echo "розмір $SIZE (з підтримуваних перетворювачем)"
+fi
 
 FILTERS="format=yuv420p"
 if [ "${VIDEO_DEINTERLACE:-1}" = "1" ]; then
@@ -49,6 +71,6 @@ fi
 echo "відео: $DEV ($V4L_STD, вхід $INPUT, $SIZE@$FPS) → $ENCODER → rtsp://…:8554/$PATH_NAME"
 
 exec ffmpeg -hide_banner -loglevel warning \
-  -f v4l2 -thread_queue_size 64 -standard "$V4L_STD" -video_size "$SIZE" -framerate "$FPS" -i "$DEV" \
+  -f v4l2 -thread_queue_size 64 "${STD_ARGS[@]}" "${FMT_ARGS[@]}" -video_size "$SIZE" -framerate "$FPS" -i "$DEV" \
   -vf "$FILTERS" "${ENC[@]}" -an \
   -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PATH_NAME"

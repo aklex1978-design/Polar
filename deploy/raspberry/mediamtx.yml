@@ -3,7 +3,6 @@
 logLevel: info
 rtsp: yes
 rtspAddress: :8554
-rtspTransports: [tcp]          # TCP — без втрат пакетів у навантаженій мережі
 rtmp: no
 hls: no
 webrtc: no
