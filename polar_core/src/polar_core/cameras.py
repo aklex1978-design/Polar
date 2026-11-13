@@ -19,7 +19,8 @@ TRANSPORTS = ("TCP", "UDP")
 class CameraRecord:
     # Загальне
     name: str = ""
-    model: str = ""
+    model: str = ""                         # назва моделі (копія з «Камери / Моделі»)
+    model_id: Optional[int] = None          # модель камери: оптика береться з неї
     # Оптика (роздільна здатність кадру — у групі «Відеопотік»; resolution_x/y у базі дублює її)
     resolution_x: int = 1920
     resolution_y: int = 1080
@@ -159,7 +160,7 @@ def address_error(protocol: str, address: str) -> Optional[str]:
 # --- база даних ----------------------------------------------------------------
 _COLS = {
     # поле запису: стовпець таблиці
-    "name": "name", "model": "model", "resolution_x": "resolution_x", "resolution_y": "resolution_y",
+    "name": "name", "model": "model", "model_id": "model_id", "resolution_x": "resolution_x", "resolution_y": "resolution_y",
     "fov_x_deg": "fov_x_deg", "fov_y_deg": "fov_y_deg", "k1": "k1", "k2": "k2", "p1": "p1", "p2": "p2",
     "k3": "k3", "latitude": "latitude", "longitude": "longitude", "altitude_m": "altitude_m",
     "north_offset_deg": "north_offset_deg", "tilt_deg": "tilt_deg", "protocol": "stream_protocol",
@@ -219,6 +220,12 @@ def save_camera(conn: sqlite3.Connection, rec: CameraRecord, box: SecretBox) -> 
         raise ValueError("; ".join(f"{k}: {v}" for k, v in errors.items()))
     rec.ros_namespace = rec.ros_namespace.strip("/")
     rec.resolution_x, rec.resolution_y = rec.stream_res_x, rec.stream_res_y   # одне джерело — потік
+    if rec.model_id is not None:                                             # оптика — з моделі камери
+        from .camera_models import OPTICS, get_model
+        m = get_model(conn, rec.model_id)
+        rec.model = m.name
+        for f in OPTICS:
+            setattr(rec, f, getattr(m, f))
     values = {col: getattr(rec, attr) for attr, col in _COLS.items()}
     stale = False
     with conn:

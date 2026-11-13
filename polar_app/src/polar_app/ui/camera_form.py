@@ -18,14 +18,15 @@ EXPANDED_BY_DEFAULT = ("Загальне",)    # решта блоків зго�
 # (група, поле, підпис, вид, параметри)
 FIELDS = [
     ("Загальне", "name", "Назва *", "text", {}),
-    ("Загальне", "model", "Модель", "text", {}),
-    ("Оптика", "fov_x_deg", "Кут огляду X (HFOV), ° *", "float", dict(lo=0.1, hi=180, dec=2)),
-    ("Оптика", "fov_y_deg", "Кут огляду Y (VFOV), ° *", "float", dict(lo=0.1, hi=180, dec=2)),
-    ("Оптика", "k1", "Дисторсія k1", "float", dict(lo=-10, hi=10, dec=5)),
-    ("Оптика", "k2", "Дисторсія k2", "float", dict(lo=-10, hi=10, dec=5)),
-    ("Оптика", "p1", "Дисторсія p1", "float", dict(lo=-10, hi=10, dec=5)),
-    ("Оптика", "p2", "Дисторсія p2", "float", dict(lo=-10, hi=10, dec=5)),
-    ("Оптика", "k3", "Дисторсія k3", "float", dict(lo=-10, hi=10, dec=5)),
+    ("Загальне", "model_id", "Модель *", "model", {}),
+    # оптика — з моделі камери («Камери / Моделі»), у формі камери лише для перегляду
+    ("Оптика", "fov_x_deg", "Кут огляду X (HFOV), °", "ro", {}),
+    ("Оптика", "fov_y_deg", "Кут огляду Y (VFOV), °", "ro", {}),
+    ("Оптика", "k1", "Дисторсія k1", "ro", {}),
+    ("Оптика", "k2", "Дисторсія k2", "ro", {}),
+    ("Оптика", "p1", "Дисторсія p1", "ro", {}),
+    ("Оптика", "p2", "Дисторсія p2", "ro", {}),
+    ("Оптика", "k3", "Дисторсія k3", "ro", {}),
     ("Розміщення", "latitude", "Широта, ° *", "optfloat", dict(ph="напр. 50.4501")),
     ("Розміщення", "longitude", "Довгота, ° *", "optfloat", dict(ph="напр. 30.5234")),
     ("Розміщення", "altitude_m", "Висота над рівнем моря, м *", "optfloat", {}),
@@ -59,6 +60,7 @@ FIELDS = [
 ]
 
 HINTS = {
+    "model_id": "оптика камери (кути огляду, дисторсія) береться з моделі; моделі — меню «Камери / Моделі»",
     "address": "URL, IP:порт або номер USB-пристрою — залежно від протоколу",
     "stream_kind": "основний — для панорами, додатковий — для перегляду",
     "buffer_ms": "менший буфер — точніша відповідність кадру кутам",
@@ -91,6 +93,7 @@ def _errors_note(n: int) -> str:
 class CameraForm(QWidget):
     closed = pyqtSignal()              # «Скасувати» або після збереження — назад до списку
     saved = pyqtSignal(int)
+    models_requested = pyqtSignal()    # «Моделі…» біля списку моделей
 
     def __init__(self, app_ctx, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -153,7 +156,15 @@ class CameraForm(QWidget):
             lay = QVBoxLayout(cell)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(1)
-            if attr == "address":
+            if attr == "model_id":
+                row = QHBoxLayout()
+                row.addWidget(w, 1)
+                self.models_btn = QPushButton("Моделі…")
+                self.models_btn.setToolTip("Додати або змінити модель — «Камери / Моделі»")
+                self.models_btn.clicked.connect(self.models_requested.emit)
+                row.addWidget(self.models_btn)
+                lay.addLayout(row)
+            elif attr == "address":
                 row = QHBoxLayout()
                 row.addWidget(w, 1)
                 self.usb_btn = QPushButton("Отримати список камер")
@@ -168,8 +179,16 @@ class CameraForm(QWidget):
             groups[group].addRow(label, cell)
             self._connect_change(w)
         self.widgets["protocol"].currentIndexChanged.connect(self._protocol_hint)
+        self.widgets["model_id"].currentIndexChanged.connect(lambda *_: self._show_optics())
+        self._models = {}
 
     def _make_widget(self, kind: str, opt: dict) -> QWidget:
+        if kind == "model":
+            return QComboBox()
+        if kind == "ro":
+            w = QLabel("—")
+            w.setStyleSheet(f"color: {QUIET}")
+            return w
         if kind in ("text", "password", "optfloat", "optint"):
             w = QLineEdit()
             if kind == "password":
@@ -196,6 +215,8 @@ class CameraForm(QWidget):
         raise ValueError(kind)
 
     def _connect_change(self, w: QWidget) -> None:
+        if isinstance(w, QLabel):
+            return
         sig = {QLineEdit: "textChanged", QSpinBox: "valueChanged", QDoubleSpinBox: "valueChanged",
                QComboBox: "currentIndexChanged", QCheckBox: "toggled"}[type(w)]
         getattr(w, sig).connect(lambda *_: self.validate())
@@ -261,10 +282,18 @@ class CameraForm(QWidget):
         self.stream_info.clear()
         self.message.clear()
         self._loading = True
+        self._fill_models()
         for _g, attr, _l, kind, _o in FIELDS:
             w = self.widgets[attr]
             value = getattr(self.rec, attr)
-            if kind == "password":
+            if kind == "model":
+                mid = value
+                if mid is None and self.rec.model:          # стара камера без посилання — за назвою
+                    mid = next((m.id for m in self._models.values() if m.name == self.rec.model), None)
+                w.setCurrentIndex(max(0, w.findData(mid)))
+            elif kind == "ro":
+                continue
+            elif kind == "password":
                 w.clear()
                 w.setPlaceholderText("збережено — залиште порожнім, щоб не змінювати" if self.rec.has_password else "")
             elif isinstance(w, QLineEdit):
@@ -276,16 +305,61 @@ class CameraForm(QWidget):
             else:
                 w.setValue(value)
         self._loading = False
+        self._show_optics()
         self.latency_btn.setEnabled(camera_id is not None)
         self._protocol_hint()
         self.validate()
+
+    def _fill_models(self) -> None:
+        w = self.widgets["model_id"]
+        self._models = {m.id: m for m in self.ctx.camera_models()}
+        w.blockSignals(True)
+        w.clear()
+        w.addItem("— виберіть модель —", None)
+        for m in self._models.values():
+            w.addItem(f"{m.name} · {m.optics_text}", m.id)
+        w.blockSignals(False)
+
+    def reload_models(self) -> None:
+        """Після змін у «Камери / Моделі» — оновити список, зберігши вибір."""
+        w = self.widgets["model_id"]
+        keep = w.currentData()
+        self._fill_models()
+        w.setCurrentIndex(max(0, w.findData(keep)))
+        self._show_optics()
+
+    def selected_model(self):
+        return self._models.get(self.widgets["model_id"].currentData())
+
+    def _show_optics(self) -> None:
+        """Оптика з вибраної моделі — лише для перегляду."""
+        m = self.selected_model()
+        from polar_core.camera_models import OPTICS
+        for attr in OPTICS:
+            v = getattr(m, attr) if m is not None else None
+            self.widgets[attr].setText("—" if v is None else f"{v:g}")
+        if m is not None:
+            tail = " · ".join(t for t in (f"сенсор {m.sensor_text}" if m.sensor_text else "", m.notes) if t)
+            self.widgets["fov_x_deg"].setToolTip(tail)
+        if not self._loading:
+            self.validate()
 
     def form_record(self) -> CameraRecord:
         rec = copy.copy(self.rec)
         self._parse_errors: Dict[str, str] = {}
         for _g, attr, _l, kind, _o in FIELDS:
             w = self.widgets[attr]
-            if kind == "password":
+            if kind == "ro":
+                continue
+            if kind == "model":
+                rec.model_id = w.currentData()
+                m = self._models.get(rec.model_id)
+                if m is not None:                           # оптика — з моделі
+                    from polar_core.camera_models import OPTICS
+                    rec.model = m.name
+                    for f in OPTICS:
+                        setattr(rec, f, getattr(m, f))
+            elif kind == "password":
                 rec.password = w.text() or None
             elif kind in ("optfloat", "optint"):
                 v = _parse_opt(w.text(), kind)
@@ -309,6 +383,9 @@ class CameraForm(QWidget):
         rec = self.form_record()
         errs = rec.validate(self.ctx.records())
         errs.update(self._parse_errors)
+        if rec.model_id is None:
+            errs["model_id"] = ("оберіть модель зі списку" if self._models else
+                                "спершу додайте модель — кнопка «Моделі…»")
         for attr, lab in self.errors.items():
             lab.setText(errs.get(attr, ""))
             lab.setVisible(attr in errs)
@@ -420,8 +497,11 @@ class CameraForm(QWidget):
             return
         self.widgets["protocol"].setCurrentIndex(self.widgets["protocol"].findData("USB"))
         self.widgets["address"].setText(cam.address)
-        if not self.widgets["model"].text().strip():
-            self.widgets["model"].setText(cam.name)
+        mw = self.widgets["model_id"]
+        if mw.currentData() is None:                         # модель з такою назвою вже є — вибрати її
+            same = next((m.id for m in self._models.values() if m.name.lower() == cam.name.lower()), None)
+            if same is not None:
+                mw.setCurrentIndex(mw.findData(same))
         if mode is not None:
             self.widgets["stream_res_x"].setText(str(mode.width))
             self.widgets["stream_res_y"].setText(str(mode.height))

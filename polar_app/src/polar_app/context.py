@@ -44,6 +44,23 @@ class AppContext:
     def records(self):
         return self.video.records()
 
+    # --- моделі камер («Камери / Моделі») -----------------------------------------------------------
+    def camera_models(self):
+        from polar_core.camera_models import list_models
+        with self.control._db_lock:
+            return list_models(self.conn)
+
+    def save_camera_model(self, m):
+        """Зберегти модель; оптика її камер оновлюється. Повертає (id, камери із застарілими панорамами)."""
+        from polar_core.camera_models import save_model
+        with self.control._db_lock:
+            return save_model(self.conn, m)
+
+    def delete_camera_model(self, model_id: int) -> None:
+        from polar_core.camera_models import delete_model
+        with self.control._db_lock:
+            delete_model(self.conn, model_id)
+
     def save_camera(self, rec: CameraRecord) -> Tuple[int, bool]:
         """Зберегти камеру і застосувати: керування (ROS 2) і відеопотік перезапускаються для неї."""
         old_name = None
