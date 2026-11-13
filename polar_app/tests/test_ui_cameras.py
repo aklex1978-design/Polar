@@ -776,7 +776,8 @@ def test_settings_menu_and_general(win, tmp_path, monkeypatch):
     menus = {a.text(): a for a in win.menuBar().actions()}
     assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта",
                                                                          "Моделі камер"]
-    assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Камери", "Режим роботи", "Журнал"]
+    assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Обʼєкти управління", "Режим роботи",
+                                                                "Журнал"]
     win.stack.setCurrentWidget(win.general)
     g = win.general
     assert g.db_file.text() == win.ctx.settings.db_path() and g.pano_dir.text() == ""

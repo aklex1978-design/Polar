@@ -235,7 +235,7 @@ class LearningService:
     def _snapshots(self, rec, rows) -> GridSnapshots:
         return GridSnapshots(self.screenshots_dir(rec), rec.north_offset_deg, az_step(rec.fov_x_deg), rows)
 
-    # --- «Робота / Камери»: крок камери і ручне збереження ------------------------------------------
+    # --- «Робота / Обʼєкти управління»: крок камери і ручне збереження ------------------------------------------
     def _pose(self, name: str, rec):
         """Поточні (азимут від півночі, кут місця) і розмір кадру."""
         sf = self.ctx.video.latest(name)

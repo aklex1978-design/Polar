@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))
             settings.addAction(act)
         work = self.menuBar().addMenu("Робота")
-        for text, page in (("Карта", self.work_map), ("Камери", self.grid), ("Режим роботи", self.work),
+        for text, page in (("Карта", self.work_map), ("Обʼєкти управління", self.grid), ("Режим роботи", self.work),
                            ("Журнал", self.events)):
             act = QAction(text, self)
             act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))

@@ -121,7 +121,7 @@ def test_snapshot_on_every_learning_step(tmp_path):
 
 
 def test_step_and_save_current(ctx):
-    """«Робота / Камери»: крок камери по вузлах сітки Навчання і «Зберегти» — у панораму та знімки."""
+    """«Робота / Обʼєкти управління»: крок камери по вузлах сітки Навчання і «Зберегти» — у панораму та знімки."""
     name = "Камера 1"
     assert wait(5, lambda: ctx.control.status(name).link_ok)
     assert ctx.video.acquire(name)
