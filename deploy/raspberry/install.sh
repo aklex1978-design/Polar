@@ -66,11 +66,22 @@ if [ ! -x /opt/polar/mediamtx ] || ! /opt/polar/mediamtx --version 2>/dev/null |
 fi
 install -m 0644 "$HERE/mediamtx.yml" /opt/polar/mediamtx.yml
 install -m 0755 "$HERE/polar-video.sh" /opt/polar/polar-video.sh
+install -m 0755 "$HERE/polar-firstboot.sh" /opt/polar/polar-firstboot.sh
 
 say "6/8 Налаштування /etc/polar"
 mkdir -p /etc/polar
 [ -f /etc/polar/polar.env ] || install -m 0644 "$HERE/polar.env.example" /etc/polar/polar.env
 [ -f /etc/polar/pantilt.yaml ] || install -m 0644 "$REPO/ros2_ws/src/pantilt_driver/config/camera_1.yaml" /etc/polar/pantilt.yaml
+# копія на boot-розділі (видно на Windows як «system-boot»): зміни в ній застосовуються при завантаженні
+if [ -d "$BOOT" ]; then
+  if [ -f "$BOOT/polar.env" ]; then
+    tr -d '\r' < "$BOOT/polar.env" > /etc/polar/polar.env     # редагували на Windows — він головний
+  else
+    cp /etc/polar/polar.env "$BOOT/polar.env"
+  fi
+  mkdir -p /var/lib/polar
+  tr -d '\r' < "$BOOT/polar.env" | sha256sum | cut -d' ' -f1 > /var/lib/polar/polar.env.sha256
+fi
 # shellcheck disable=SC1091
 . /etc/polar/polar.env
 
@@ -84,9 +95,10 @@ fi
 systemctl restart chrony || true
 
 say "8/8 Служби автозапуску"
-install -m 0644 "$HERE/polar-pantilt.service" "$HERE/polar-video.service" /etc/systemd/system/
+install -m 0644 "$HERE/polar-pantilt.service" "$HERE/polar-video.service" "$HERE/polar-firstboot.service" \
+  /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable polar-pantilt.service
+systemctl enable polar-firstboot.service polar-pantilt.service
 if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
   systemctl enable polar-video.service
 else
@@ -97,7 +109,8 @@ chown -R polar:polar /opt/polar
 say "Готово"
 echo "Камера: ${TOPIC_PREFIX:-/polar}/${CAMERA_NS:-camera_1}, ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}, сервоприводи: ${SERVO_BACKEND:-st3020}"
 [ "${VIDEO_ENABLED:-1}" = "1" ] && echo "Відео: rtsp://$(hostname -I | awk '{print $1}'):8554/${RTSP_PATH:-camera_1}"
-echo "Змініть під цю камеру: sudo nano /etc/polar/polar.env   (і за потреби /etc/polar/pantilt.yaml)"
+echo "Змініть під цю камеру: sudo nano /boot/firmware/polar.env  (або на Windows: диск system-boot\\polar.env),"
+echo "  потім: sudo systemctl restart polar-firstboot"
 if [ "$REBOOT" = 1 ]; then
   echo "UART змінено — ПОТРІБНЕ ПЕРЕЗАВАНТАЖЕННЯ: sudo reboot"
 else

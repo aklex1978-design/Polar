@@ -28,18 +28,23 @@ sudo ./deploy/raspberry/install.sh
 3. створює системного користувача `polar` з доступом до UART і відео;
 4. збирає `polar_interfaces` і `pantilt_driver` у `/opt/polar/ros2_ws`;
 5. ставить MediaMTX і скрипт відео в `/opt/polar`;
-6. створює `/etc/polar/polar.env` і `/etc/polar/pantilt.yaml` (якщо їх ще немає);
+6. створює `/etc/polar/polar.env` і `/etc/polar/pantilt.yaml` (якщо їх ще немає) і копію `polar.env` на boot-розділі;
 7. налаштовує chrony;
-8. вмикає служби `polar-pantilt` і (якщо `VIDEO_ENABLED=1`) `polar-video`.
+8. вмикає служби `polar-firstboot` (налаштування з boot-розділу), `polar-pantilt` і (якщо `VIDEO_ENABLED=1`) `polar-video`.
 
 Після першого запуску — **`sudo reboot`** (змінено UART).
 
 ## 3. Налаштування камери
 
+Налаштування лежать на **boot-розділі SD-карти** — файл `polar.env`, який видно й на Windows (диск
+«system-boot»). При кожному завантаженні Pi бере зміни з нього (служба `polar-firstboot`).
+
+На Pi:
 ```bash
-sudo nano /etc/polar/polar.env
-sudo systemctl restart polar-pantilt polar-video
+sudo nano /boot/firmware/polar.env
+sudo systemctl restart polar-firstboot      # застосувати без перезавантаження
 ```
+Або на Windows: вийняти карту → диск «system-boot» → `polar.env` у Блокноті → зберегти → карту в Pi.
 
 | Параметр | Що вписати |
 |---|---|
@@ -55,8 +60,9 @@ sudo systemctl restart polar-pantilt polar-video
 Межі, швидкості й нуль сервоприводів задаються з сервера («Камери → Управління»): сервер надсилає їх
 вузлу при підключенні; `/etc/polar/pantilt.yaml` — лише стартові значення.
 
-**Після зміни `VIDEO_ENABLED`** запустіть `sudo ./deploy/raspberry/install.sh` ще раз — він увімкне або
-вимкне службу відео.
+Після зміни `polar.env` Pi сам: копіює його в `/etc/polar`, задає імʼя компʼютера за камерою
+(`camera_2` → `polar-camera-2`), вмикає або вимикає відео (`VIDEO_ENABLED`), налаштовує NTP і перезапускає
+служби Polar.
 
 ## 4. На сервері
 
@@ -79,6 +85,44 @@ sudo ./deploy/raspberry/check.sh
 (кодек, розмір, кадри), чи публікується стан камери в ROS 2, синхронізацію часу.
 
 Журнали служб: `journalctl -u polar-pantilt -f`, `journalctl -u polar-video -f`.
+
+## 6. Образ для тиражування («еталонна карта»)
+
+Один Pi налаштовується і перевіряється повністю, з його карти знімається образ, і цей образ записується на
+карти всіх інших камер — кожній лишається змінити `polar.env`.
+
+**Еталонна карта**
+1. Пункти 1–5 на одному Pi: Ubuntu → `install.sh` → перезавантаження → `polar.env` → `check.sh`;
+   на сервері перевірити сервоприводи (ID, ◀ ▶ ▲ ▼, «Стоп») і відео з перетворювача.
+2. Підготувати до зняття образу (Pi вимкнеться сам):
+   ```bash
+   sudo ./deploy/raspberry/prepare-image.sh
+   ```
+   Скрипт кладе `polar.env` і `pantilt.yaml` на boot-розділ, очищає machine-id, SSH-ключі, журнали й історію
+   — на кожній копії вони створяться свої. **Після цього карту не вмикати в Pi до зняття образу.**
+
+**Зняття образу (Windows)**
+3. Карту — у кардрідер компʼютера. Якщо Windows пропонує «відформатувати диск» — **ні** (це розділ Linux).
+4. [Win32 Disk Imager](https://sourceforge.net/projects/win32diskimager/): Image File — напр.
+   `D:\polar\polar-pi-2026-11.img`, Device — літера диска «system-boot», кнопка **Read**. Образ має розмір
+   усієї карти (напр. 32 ГБ).
+5. (Необовʼязково) стиснути: у WSL / Linux — [PiShrink](https://github.com/Drewsif/PiShrink)
+   `sudo pishrink.sh -z polar-pi-2026-11.img` → кілька ГБ, і образ поміститься на карту будь-якого розміру,
+   не меншого за дані.
+
+**Нова камера**
+6. Записати образ на нову карту: Raspberry Pi Imager → *Use custom* (або Win32 Disk Imager → **Write**,
+   або balenaEtcher). Без стиснення нова карта має бути **не меншою** за еталонну.
+7. На тому ж компʼютері — диск «system-boot» → `polar.env` у Блокноті: `CAMERA_NS`, `RTSP_PATH`
+   (напр. `camera_2`), за потреби `VIDEO_*`, `ROS_DOMAIN_ID`. Зберегти, безпечно вийняти карту.
+8. Карту — у Pi, увімкнути. При першому завантаженні: нові SSH-ключі й machine-id, імʼя
+   `polar-camera-2`, служби з новими налаштуваннями. Адреса Pi — у DHCP маршрутизатора (за імʼям);
+   бажано закріпити її (резервування DHCP).
+9. На сервері — нова камера у формі: простір імен `camera_2`, RTSP `rtsp://<IP>:8554/camera_2`;
+   на Pi — `check.sh`; сервоприводи цієї камери — ID 1 і 2 (кожна камера — своя шина, ID повторюються).
+
+Оновлення Polar на вже встановлених Pi: `cd Polar && git pull && sudo ./deploy/raspberry/install.sh`
+(налаштування в `polar.env` зберігаються).
 
 ## USB AV-перетворювач (CVBS): що підходить
 
