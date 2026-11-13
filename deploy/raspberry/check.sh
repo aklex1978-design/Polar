@@ -42,13 +42,18 @@ if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
 fi
 
 echo "ROS 2"
-set +u
-# shellcheck disable=SC1091
-source /opt/ros/humble/setup.bash 2>/dev/null && source /opt/polar/ros2_ws/install/setup.bash 2>/dev/null
-[ -z "$ROS_DISCOVERY_SERVER" ] && unset ROS_DISCOVERY_SERVER
 NS="${TOPIC_PREFIX:-/polar}/${CAMERA_NS:-camera_1}"
-if timeout 8 ros2 topic echo --once "$NS/state" >/dev/null 2>&1; then ok "$NS/state публікується"
-else bad "$NS/state не публікується — journalctl -u polar-pantilt -n 50"; fi
+# від імені користувача polar і з тими ж змінними, що в служби (Fast DDS між різними користувачами
+# через спільну памʼять може не передавати дані); перший запуск ros2 на Pi — до ~15 с
+ROSCMD="set -a; . $ENV_FILE; set +a; [ -z \"\$ROS_DISCOVERY_SERVER\" ] && unset ROS_DISCOVERY_SERVER; \
+  source /opt/ros/humble/setup.bash; source /opt/polar/ros2_ws/install/setup.bash"
+if out=$(sudo -u polar -H bash -c "$ROSCMD; timeout 20 ros2 topic echo --once $NS/state" 2>&1); then
+  ok "$NS/state публікується: $(echo "$out" | grep -E "azimuth_deg|elevation_deg|moving" | xargs | cut -c1-90)"
+else
+  bad "$NS/state не публікується"
+  info "вузли: $(sudo -u polar -H bash -c "$ROSCMD; timeout 15 ros2 node list" 2>/dev/null | xargs)"
+  info "журнал вузла: journalctl -u polar-pantilt -n 50 --no-pager"
+fi
 
 echo "Час"
 chronyc tracking 2>/dev/null | awk -F': ' '/Reference ID|System time/{print "       " $0}'
