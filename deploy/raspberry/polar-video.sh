@@ -64,7 +64,8 @@ if [ "$ENCODER" = "auto" ]; then
   if hw_ok; then ENCODER=h264_v4l2m2m; else ENCODER=libx264; fi
 fi
 if [ "$ENCODER" = "h264_v4l2m2m" ]; then
-  ENC=(-c:v h264_v4l2m2m -b:v "$BITRATE" -g "$FPS")
+  # апаратний кодер не приймає -g; ключовий кадр — щосекунди, щоб сервер швидко отримував перший кадр
+  ENC=(-c:v h264_v4l2m2m -b:v "$BITRATE" -force_key_frames "expr:gte(t,n_forced*1)")
 else
   ENC=(-c:v libx264 -preset ultrafast -tune zerolatency -b:v "$BITRATE" -g "$FPS" -bf 0)
 fi

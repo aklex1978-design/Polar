@@ -42,7 +42,7 @@ fi
 echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
   > /etc/apt/sources.list.d/ros2.list
 apt-get update -q
-apt-get install -y -q ros-humble-ros-base ros-humble-rmw-cyclonedds-cpp python3-colcon-common-extensions build-essential cmake \
+apt-get install -y -q ros-humble-ros-base ros-humble-rmw-fastrtps-cpp ros-humble-rmw-cyclonedds-cpp python3-colcon-common-extensions build-essential cmake \
   python3-serial chrony v4l-utils ffmpeg usbutils
 
 say "3/8 Користувач polar (доступ до UART і відео)"
