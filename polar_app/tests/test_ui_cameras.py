@@ -202,6 +202,7 @@ def test_demo_checkboxes_in_form(win):
     win.cameras.add_btn.click()
     f = win.form
     f.widgets["name"].setText("Без обладнання")
+    f.widgets["model_id"].setCurrentIndex(1)
     for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
         f.widgets[k].setText(v)
     f.widgets["address"].setText("")
@@ -269,9 +270,9 @@ def test_streams_follow_screens(win):
     assert not v.is_running("Камера 3")
 
 
-def test_camera_menu_has_list_and_control_only(win):
+def test_camera_menu_has_list_control_and_models(win):
     menu = win.menuBar().actions()[0].menu()
-    assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
+    assert [a.text() for a in menu.actions()] == ["Список", "Управління", "Моделі"]
 
 
 def test_form_sections_collapse_and_buttons_visible(win):
