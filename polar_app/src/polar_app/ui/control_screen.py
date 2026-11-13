@@ -1,4 +1,4 @@
-"""Екран «Камери / Управління»: стан камер, цільові кути, ручне керування, Стоп, сервоприводи."""
+"""Екран «Обʼєкти управління / Управління»: стан камер, цільові кути, ручне керування, Стоп, сервоприводи."""
 from __future__ import annotations
 
 import copy
@@ -129,7 +129,7 @@ class ServoColumn:
 
 
 class ControlScreen(QWidget):
-    """Сторінка меню «Камери / Управління»."""
+    """Сторінка меню «Обʼєкти управління / Управління»."""
 
     REFRESH_MS = 100
 
@@ -179,7 +179,7 @@ class ControlScreen(QWidget):
     def _build_details(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
-        self.title = QLabel("Камери / Управління")
+        self.title = QLabel("Обʼєкти управління / Управління")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(self.title)
         demo = QHBoxLayout()
@@ -423,7 +423,7 @@ class ControlScreen(QWidget):
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
         self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
         self._sync_stream()
-        self.title.setText(f"Камери / Управління · {self._current}" if self._current else "Камери / Управління")
+        self.title.setText(f"Обʼєкти управління / Управління · {self._current}" if self._current else "Обʼєкти управління / Управління")
         self.message.clear()
         self._load_form()
         self.refresh()

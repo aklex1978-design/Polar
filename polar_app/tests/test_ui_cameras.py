@@ -1,4 +1,4 @@
-"""Екрани «Камери» і «Камери / Редагування» з імітатором (QT_QPA_PLATFORM=offscreen)."""
+"""Екрани «Обʼєкти управління» і «Обʼєкти управління / Редагування» з імітатором (QT_QPA_PLATFORM=offscreen)."""
 import os
 import time
 
@@ -7,7 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PyQt6.QtWidgets")
 
-from PyQt6.QtCore import QCoreApplication  # noqa: E402
+from PyQt6.QtCore import QCoreApplication, Qt  # noqa: E402
 
 from polar_app.__main__ import build_context  # noqa: E402
 from polar_app.ui.main_window import MainWindow  # noqa: E402
@@ -62,6 +62,10 @@ def test_add_camera_validation_and_save(win):
     assert win.stack.currentWidget() is f
     assert not f.save_btn.isEnabled()                        # порожні обовʼязкові поля
     assert f.errors["name"].text() and f.errors["latitude"].text()
+    assert f.errors["model_id"].text() == "оберіть модель зі списку"
+    assert f.widgets["fov_x_deg"].text() == "—"
+    f.widgets["model_id"].setCurrentIndex(f.widgets["model_id"].findText("демо", Qt.MatchFlag.MatchStartsWith))
+    assert f.widgets["fov_x_deg"].text() == "60" and f.widgets["fov_y_deg"].text() == "34"   # оптика з моделі
     f.widgets["name"].setText("Камера 4")
     f.widgets["latitude"].setText("50,46")                   # кома теж працює
     f.widgets["longitude"].setText("30.6")
@@ -81,6 +85,7 @@ def test_add_camera_validation_and_save(win):
     recs = win.ctx.records()
     new = [r for r in recs if r.name == "Камера 4"][0]
     assert new.latitude == pytest.approx(50.46) and new.has_password
+    assert new.model == "демо" and new.model_id is not None and new.fov_x_deg == 60
     assert cm.stream_password(win.ctx.conn, win.ctx.box, new.id) == "секрет"
     assert "Камера 4" in win.control._items                  # з'явилась і в «Управлінні»
     assert wait(6, lambda: win.ctx.video.stats("Камера 4") and win.ctx.video.stats("Камера 4").frames > 3)
@@ -91,7 +96,13 @@ def test_edit_marks_panorama_stale_and_rename(win):
     win.edit_camera(rec.id)
     f = win.form
     assert f.widgets["name"].text() == "Камера 1"
-    f.widgets["fov_x_deg"].setValue(65.0)
+    assert f.widgets["model_id"].currentText().startswith("демо")
+    from polar_core.camera_models import CameraModelSpec
+    win.ctx.save_camera_model(CameraModelSpec("Ширококутна", 65, 40))
+    win.edit_camera(rec.id)                                  # список моделей оновлюється при відкритті форми
+    w = f.widgets["model_id"]
+    w.setCurrentIndex(w.findText("Ширококутна", Qt.MatchFlag.MatchStartsWith))
+    assert f.widgets["fov_x_deg"].text() == "65"
     f.widgets["name"].setText("Північна")
     assert f.save()
     assert "застарілою" in f.message.text()
@@ -163,7 +174,7 @@ def test_usb_camera_list_fills_form(win):
     assert f.widgets["address"].text() == "/dev/v4l/by-id/usb-test_HD_USB_Camera-video-index0"
     assert (f.widgets["stream_res_x"].text(), f.widgets["stream_res_y"].text()) == ("1280", "720")
     assert f.widgets["fps"].value() == 60.0 and f.widgets["codec"].currentData() == "MJPEG"
-    assert f.widgets["model"].text() == "Тест: HD USB Camera"
+    f.widgets["model_id"].setCurrentIndex(1)
     assert "address" not in f.validate()
     # вже додана камера позначається в списку
     f.widgets["name"].setText("USB 1")
@@ -191,6 +202,7 @@ def test_demo_checkboxes_in_form(win):
     win.cameras.add_btn.click()
     f = win.form
     f.widgets["name"].setText("Без обладнання")
+    f.widgets["model_id"].setCurrentIndex(1)
     for k, v in (("latitude", "50.1"), ("longitude", "30.1"), ("altitude_m", "100")):
         f.widgets[k].setText(v)
     f.widgets["address"].setText("")
@@ -258,7 +270,8 @@ def test_streams_follow_screens(win):
     assert not v.is_running("Камера 3")
 
 
-def test_camera_menu_has_list_and_control_only(win):
+def test_objects_menu_has_list_and_control(win):
+    assert win.menuBar().actions()[0].text() == "Обʼєкти управління"
     menu = win.menuBar().actions()[0].menu()
     assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
 
@@ -758,11 +771,13 @@ def test_work_map_demo_target(win):
 
 
 def test_settings_menu_and_general(win, tmp_path, monkeypatch):
-    """«Налаштування»: Загальні, Виявлення, ROS 2, Карта; «Загальні» — база, шлях до панорам, резервна копія."""
+    """«Налаштування»: Загальні, Виявлення, ROS 2, Карта, Моделі камер; «Загальні» — база, шлях до панорам, резервна копія."""
     monkeypatch.setenv("POLAR_CONFIG_DIR", str(tmp_path / "config"))
     menus = {a.text(): a for a in win.menuBar().actions()}
-    assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта"]
-    assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Камери", "Режим роботи", "Журнал"]
+    assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта",
+                                                                         "Моделі камер"]
+    assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Обʼєкти управління", "Режим роботи",
+                                                                "Журнал"]
     win.stack.setCurrentWidget(win.general)
     g = win.general
     assert g.db_file.text() == win.ctx.settings.db_path() and g.pano_dir.text() == ""

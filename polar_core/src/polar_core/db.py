@@ -159,6 +159,42 @@ MIGRATIONS = [
     DELETE FROM map_levels;
     DELETE FROM settings WHERE key IN ('map.main_file', 'map.base_zoom');
     """,
+    # 8 — моделі камер: оптика (кути огляду, дисторсія) задається моделлю, камера посилається на модель.
+    # Наявні камери: кожен різний набір (назва моделі, оптика) стає моделлю; камери привʼязуються до неї.
+    """
+    CREATE TABLE camera_models (
+        id          INTEGER PRIMARY KEY,
+        name        TEXT NOT NULL UNIQUE,
+        fov_x_deg   REAL NOT NULL,
+        fov_y_deg   REAL NOT NULL,
+        k1 REAL NOT NULL DEFAULT 0, k2 REAL NOT NULL DEFAULT 0, p1 REAL NOT NULL DEFAULT 0,
+        p2 REAL NOT NULL DEFAULT 0, k3 REAL NOT NULL DEFAULT 0,
+        sensor_x    INTEGER,                    -- роздільна здатність сенсора (довідково, напр. 256×192)
+        sensor_y    INTEGER,
+        notes       TEXT NOT NULL DEFAULT '',
+        src_key     TEXT,                       -- службове: звідки модель створена міграцією
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    ALTER TABLE cameras ADD COLUMN model_id INTEGER REFERENCES camera_models(id) ON DELETE SET NULL;
+    INSERT INTO camera_models (name, fov_x_deg, fov_y_deg, k1, k2, p1, p2, k3, src_key)
+    SELECT CASE WHEN (SELECT COUNT(*) FROM (SELECT 1 FROM cameras c2
+                                             WHERE TRIM(c2.model) = TRIM(g.model) AND TRIM(g.model) != ''
+                                             GROUP BY c2.fov_x_deg, c2.fov_y_deg, c2.k1, c2.k2, c2.p1, c2.p2, c2.k3)) > 1
+                     OR TRIM(g.model) = ''
+                THEN CASE WHEN TRIM(g.model) = '' THEN g.cam ELSE TRIM(g.model) || ' (' || g.cam || ')' END
+                ELSE TRIM(g.model) END,
+           g.fov_x_deg, g.fov_y_deg, g.k1, g.k2, g.p1, g.p2, g.k3, g.k
+    FROM (SELECT model, MIN(name) AS cam, fov_x_deg, fov_y_deg, k1, k2, p1, p2, k3,
+                 TRIM(model) || '|' || fov_x_deg || '|' || fov_y_deg || '|' || k1 || '|' || k2 || '|' || p1 || '|'
+                 || p2 || '|' || k3 AS k
+          FROM cameras GROUP BY TRIM(model), fov_x_deg, fov_y_deg, k1, k2, p1, p2, k3) g;
+    UPDATE cameras SET model_id = (
+        SELECT m.id FROM camera_models m WHERE m.src_key = TRIM(cameras.model) || '|' || cameras.fov_x_deg || '|'
+            || cameras.fov_y_deg || '|' || cameras.k1 || '|' || cameras.k2 || '|' || cameras.p1 || '|'
+            || cameras.p2 || '|' || cameras.k3);
+    UPDATE cameras SET model = (SELECT name FROM camera_models WHERE id = cameras.model_id)
+        WHERE model_id IS NOT NULL;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

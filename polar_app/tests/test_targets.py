@@ -152,7 +152,12 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         err = float((frame.to_enu(tt.geo) - frame.to_enu(target)) @ (frame.to_enu(tt.geo) - frame.to_enu(target))) ** 0.5
         tol = c.detection.targets.params.tolerance(tt.target.distance_m)
         assert err <= tol, (err, tol)
-        row = c.conn.execute("SELECT latitude, longitude, altitude_m, cameras FROM targets").fetchone()
+        q = "SELECT latitude, longitude, altitude_m, cameras FROM targets"
+        def stored():
+            with c.control._db_lock:
+                return c.conn.execute(q).fetchone() is not None
+        assert wait(10, stored)                            # запис у базу — асинхронно
+        row = c.conn.execute(q).fetchone()
         assert row[3] == 2 and row[2] == pytest.approx(330.0, abs=tol)
     finally:
         c.shutdown()

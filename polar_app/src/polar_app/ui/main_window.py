@@ -1,4 +1,4 @@
-"""Головне вікно: меню «Камери» (список, управління; редагування і калібрування — зі списку камер),
+"""Головне вікно: меню «Обʼєкти управління» (список, управління; редагування і калібрування — зі списку камер),
 «Налаштування» (загальні, виявлення, ROS 2, карта) і «Робота» (карта, камери, режим роботи, журнал).
 Рядок стану: файл бази і останні помилки/попередження з журналу. Необроблені помилки — вікном."""
 from __future__ import annotations
@@ -17,6 +17,7 @@ from .work_screen import WorkScreen
 from .cameras_grid import CamerasGridScreen
 from .events_screen import EventsScreen
 from .map_settings import MapSettingsScreen
+from .models_screen import ModelsScreen
 from .settings_screens import DetectionSettingsScreen, GeneralSettingsScreen, RosSettingsScreen
 from .work_map import WorkMapScreen
 
@@ -46,12 +47,15 @@ class MainWindow(QMainWindow):
         self.detection_settings = DetectionSettingsScreen(ctx)
         self.ros_settings = RosSettingsScreen(ctx)
         self.events = EventsScreen(ctx)
+        self.models = ModelsScreen(ctx)
+        self.form.models_requested.connect(lambda: self.stack.setCurrentWidget(self.models))
+        self.models.changed.connect(lambda: (self.cameras.refresh(), self.form.reload_models()))
         self.general.restart_requested.connect(self.restart)
-        self._entering = {self.general: self.general.enter, self.detection_settings: self.detection_settings.enter,
+        self._entering = {self.models: self.models.enter, self.general: self.general.enter, self.detection_settings: self.detection_settings.enter,
                           self.ros_settings: self.ros_settings.enter, self.events: self.events.enter}
         for page in (self.cameras, self.form, self.control, self.calibration, self.work, self.grid,
                      self.map_settings, self.work_map, self.general, self.detection_settings, self.ros_settings,
-                     self.events):
+                     self.events, self.models):
             self.stack.addWidget(page)
 
         self.cameras.edit_requested.connect(self.edit_camera)
@@ -63,7 +67,7 @@ class MainWindow(QMainWindow):
         self._page = None
         self.stack.currentChanged.connect(self._page_changed)
 
-        menu = self.menuBar().addMenu("Камери")
+        menu = self.menuBar().addMenu("Обʼєкти управління")
         # «Редагування» і «Калібрування» відкриваються кнопками в рядку камери (і «Додати») зі списку
         for text, slot in (("Список", self.show_cameras),
                            ("Управління", lambda: self.stack.setCurrentWidget(self.control))):
@@ -72,12 +76,13 @@ class MainWindow(QMainWindow):
             menu.addAction(act)
         settings = self.menuBar().addMenu("Налаштування")
         for text, page in (("Загальні", self.general), ("Виявлення", self.detection_settings),
-                           ("ROS 2", self.ros_settings), ("Карта", self.map_settings)):
+                           ("ROS 2", self.ros_settings), ("Карта", self.map_settings),
+                           ("Моделі камер", self.models)):
             act = QAction(text, self)
             act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))
             settings.addAction(act)
         work = self.menuBar().addMenu("Робота")
-        for text, page in (("Карта", self.work_map), ("Камери", self.grid), ("Режим роботи", self.work),
+        for text, page in (("Карта", self.work_map), ("Обʼєкти управління", self.grid), ("Режим роботи", self.work),
                            ("Журнал", self.events)):
             act = QAction(text, self)
             act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))
