@@ -1,4 +1,4 @@
-"""Екрани «Камери» і «Камери / Редагування» з імітатором (QT_QPA_PLATFORM=offscreen)."""
+"""Екрани «Обʼєкти управління» і «Обʼєкти управління / Редагування» з імітатором (QT_QPA_PLATFORM=offscreen)."""
 import os
 import time
 
@@ -270,9 +270,10 @@ def test_streams_follow_screens(win):
     assert not v.is_running("Камера 3")
 
 
-def test_camera_menu_has_list_control_and_models(win):
+def test_objects_menu_has_list_and_control(win):
+    assert win.menuBar().actions()[0].text() == "Обʼєкти управління"
     menu = win.menuBar().actions()[0].menu()
-    assert [a.text() for a in menu.actions()] == ["Список", "Управління", "Моделі"]
+    assert [a.text() for a in menu.actions()] == ["Список", "Управління"]
 
 
 def test_form_sections_collapse_and_buttons_visible(win):
@@ -770,10 +771,11 @@ def test_work_map_demo_target(win):
 
 
 def test_settings_menu_and_general(win, tmp_path, monkeypatch):
-    """«Налаштування»: Загальні, Виявлення, ROS 2, Карта; «Загальні» — база, шлях до панорам, резервна копія."""
+    """«Налаштування»: Загальні, Виявлення, ROS 2, Карта, Моделі камер; «Загальні» — база, шлях до панорам, резервна копія."""
     monkeypatch.setenv("POLAR_CONFIG_DIR", str(tmp_path / "config"))
     menus = {a.text(): a for a in win.menuBar().actions()}
-    assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта"]
+    assert [a.text() for a in menus["Налаштування"].menu().actions()] == ["Загальні", "Виявлення", "ROS 2", "Карта",
+                                                                         "Моделі камер"]
     assert [a.text() for a in menus["Робота"].menu().actions()] == ["Карта", "Камери", "Режим роботи", "Журнал"]
     win.stack.setCurrentWidget(win.general)
     g = win.general

@@ -1,4 +1,4 @@
-"""Головне вікно: меню «Камери» (список, управління; редагування і калібрування — зі списку камер),
+"""Головне вікно: меню «Обʼєкти управління» (список, управління; редагування і калібрування — зі списку камер),
 «Налаштування» (загальні, виявлення, ROS 2, карта) і «Робота» (карта, камери, режим роботи, журнал).
 Рядок стану: файл бази і останні помилки/попередження з журналу. Необроблені помилки — вікном."""
 from __future__ import annotations
@@ -67,17 +67,17 @@ class MainWindow(QMainWindow):
         self._page = None
         self.stack.currentChanged.connect(self._page_changed)
 
-        menu = self.menuBar().addMenu("Камери")
+        menu = self.menuBar().addMenu("Обʼєкти управління")
         # «Редагування» і «Калібрування» відкриваються кнопками в рядку камери (і «Додати») зі списку
         for text, slot in (("Список", self.show_cameras),
-                           ("Управління", lambda: self.stack.setCurrentWidget(self.control)),
-                           ("Моделі", lambda: self.stack.setCurrentWidget(self.models))):
+                           ("Управління", lambda: self.stack.setCurrentWidget(self.control))):
             act = QAction(text, self)
             act.triggered.connect(slot)
             menu.addAction(act)
         settings = self.menuBar().addMenu("Налаштування")
         for text, page in (("Загальні", self.general), ("Виявлення", self.detection_settings),
-                           ("ROS 2", self.ros_settings), ("Карта", self.map_settings)):
+                           ("ROS 2", self.ros_settings), ("Карта", self.map_settings),
+                           ("Моделі камер", self.models)):
             act = QAction(text, self)
             act.triggered.connect(lambda _=False, p=page: self.stack.setCurrentWidget(p))
             settings.addAction(act)

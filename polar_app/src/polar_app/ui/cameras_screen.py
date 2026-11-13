@@ -1,4 +1,4 @@
-"""Меню «Камери»: список камер (назва, модель) з кнопками в рядку і «Додати» над списком."""
+"""Меню «Обʼєкти управління»: список камер (назва, модель) з кнопками в рядку і «Додати» над списком."""
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -21,7 +21,7 @@ class CamerasScreen(QWidget):
         self.ctx = app_ctx
         self.confirm: Callable[[str], bool] = self._ask
         v = QVBoxLayout(self)
-        title = QLabel("Камери")
+        title = QLabel("Обʼєкти управління / Список")
         title.setStyleSheet("font-size: 15px; font-weight: 600")
         top = QHBoxLayout()
         top.addWidget(title)

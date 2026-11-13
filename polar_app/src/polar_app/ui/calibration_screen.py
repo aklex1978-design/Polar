@@ -1,4 +1,4 @@
-"""«Камери / Калібрування»: перегляд камери з центром, колами поля зору і віссю нахилу; панорама з фігурою
+"""«Обʼєкти управління / Калібрування»: перегляд камери з центром, колами поля зору і віссю нахилу; панорама з фігурою
 поля зору; перевірка похибки розміщення за орієнтиром."""
 from __future__ import annotations
 
@@ -345,7 +345,7 @@ class CalibrationScreen(QWidget):
         self.check = cal.LandmarkCheck()
 
         v = QVBoxLayout(self)
-        self.title = QLabel("Камери / Калібрування")
+        self.title = QLabel("Обʼєкти управління / Калібрування")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         v.addWidget(self.title)
         self.view = CameraView()
@@ -480,7 +480,7 @@ class CalibrationScreen(QWidget):
         with self.ctx.control._db_lock:
             self.calib = cal.load(self.ctx.conn, camera_id)
             self.criterion = cal.accuracy_criterion(self.ctx.conn)
-        self.title.setText(f"Камери / Калібрування · {self.rec.name}")
+        self.title.setText(f"Обʼєкти управління / Калібрування · {self.rec.name}")
         self._loading_tilt = True
         self.tilt.setValue(self.rec.tilt_deg)
         self._loading_tilt = False

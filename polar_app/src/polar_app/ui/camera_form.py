@@ -1,4 +1,4 @@
-"""Підменю «Камери / Редагування»: одна форма для додавання і редагування камери."""
+"""Підменю «Обʼєкти управління / Редагування»: одна форма для додавання і редагування камери."""
 from __future__ import annotations
 
 import copy
@@ -19,7 +19,7 @@ EXPANDED_BY_DEFAULT = ("Загальне",)    # решта блоків зго�
 FIELDS = [
     ("Загальне", "name", "Назва *", "text", {}),
     ("Загальне", "model_id", "Модель *", "model", {}),
-    # оптика — з моделі камери («Камери / Моделі»), у формі камери лише для перегляду
+    # оптика — з моделі камери («Налаштування / Моделі камер»), у формі камери лише для перегляду
     ("Оптика", "fov_x_deg", "Кут огляду X (HFOV), °", "ro", {}),
     ("Оптика", "fov_y_deg", "Кут огляду Y (VFOV), °", "ro", {}),
     ("Оптика", "k1", "Дисторсія k1", "ro", {}),
@@ -60,7 +60,7 @@ FIELDS = [
 ]
 
 HINTS = {
-    "model_id": "оптика камери (кути огляду, дисторсія) береться з моделі; моделі — меню «Камери / Моделі»",
+    "model_id": "оптика камери (кути огляду, дисторсія) береться з моделі; моделі — меню «Налаштування / Моделі камер»",
     "address": "URL, IP:порт або номер USB-пристрою — залежно від протоколу",
     "stream_kind": "основний — для панорами, додатковий — для перегляду",
     "buffer_ms": "менший буфер — точніша відповідність кадру кутам",
@@ -111,7 +111,7 @@ class CameraForm(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         form_host = QWidget()
         self.form_layout = QVBoxLayout(form_host)
-        self.title = QLabel("Камери / Редагування")
+        self.title = QLabel("Обʼєкти управління / Редагування")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
         self.form_layout.addWidget(self.title)
         self._build_fields()
@@ -160,7 +160,7 @@ class CameraForm(QWidget):
                 row = QHBoxLayout()
                 row.addWidget(w, 1)
                 self.models_btn = QPushButton("Моделі…")
-                self.models_btn.setToolTip("Додати або змінити модель — «Камери / Моделі»")
+                self.models_btn.setToolTip("Додати або змінити модель — «Налаштування / Моделі камер»")
                 self.models_btn.clicked.connect(self.models_requested.emit)
                 row.addWidget(self.models_btn)
                 lay.addLayout(row)
@@ -274,7 +274,7 @@ class CameraForm(QWidget):
             ros_namespace=f"camera_{len(self.ctx.records()) + 1}")
         if camera_id is not None and self.ctx.video.acquire(self.rec.name):
             self._streaming = self.rec.name
-        self.title.setText(f"Камери / Редагування · {self.rec.name}" if camera_id else "Камери / Додати камеру")
+        self.title.setText(f"Обʼєкти управління / Редагування · {self.rec.name}" if camera_id else "Обʼєкти управління / Додати камеру")
         self._check_pixmap = None
         self.preview.clear()
         self.preview.setText("Немає кадру")
@@ -321,7 +321,7 @@ class CameraForm(QWidget):
         w.blockSignals(False)
 
     def reload_models(self) -> None:
-        """Після змін у «Камери / Моделі» — оновити список, зберігши вибір."""
+        """Після змін у «Налаштування / Моделі камер» — оновити список, зберігши вибір."""
         w = self.widgets["model_id"]
         keep = w.currentData()
         self._fill_models()

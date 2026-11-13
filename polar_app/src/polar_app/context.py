@@ -44,7 +44,7 @@ class AppContext:
     def records(self):
         return self.video.records()
 
-    # --- моделі камер («Камери / Моделі») -----------------------------------------------------------
+    # --- моделі камер («Налаштування / Моделі камер») -----------------------------------------------------------
     def camera_models(self):
         from polar_core.camera_models import list_models
         with self.control._db_lock:

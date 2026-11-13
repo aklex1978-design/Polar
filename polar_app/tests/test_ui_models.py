@@ -1,4 +1,4 @@
-"""Екран «Камери / Моделі» і вибір моделі у формі камери (QT_QPA_PLATFORM=offscreen)."""
+"""Екран «Налаштування / Моделі камер» і вибір моделі у формі камери (QT_QPA_PLATFORM=offscreen)."""
 import os
 
 import pytest
@@ -37,8 +37,8 @@ def win(app, tmp_path):
 
 
 def open_models(win):
-    act = next(a for m in win.menuBar().actions() if m.text() == "Камери"
-               for a in m.menu().actions() if a.text() == "Моделі")
+    act = next(a for m in win.menuBar().actions() if m.text() == "Налаштування"
+               for a in m.menu().actions() if a.text() == "Моделі камер")
     act.trigger()
     assert win.stack.currentWidget() is win.models
     return win.models
