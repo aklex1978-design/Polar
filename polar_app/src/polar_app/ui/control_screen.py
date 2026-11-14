@@ -398,6 +398,12 @@ class ControlScreen(QWidget):
         self.revert_btn = QPushButton("Скасувати зміни")
         self.revert_btn.clicked.connect(self._load_form)
         btns.addWidget(self.zero_btn)
+        self.free_limits = QCheckBox("Зняти межі кута (для виставлення нуля)")
+        self.free_limits.setToolTip("Тимчасово дозволити кут місця нижче 0° і вище 90° (і азимут за межами), щоб "
+                                    "навести камеру на справжній горизонт і встановити нуль. У базі межі не "
+                                    "змінюються; знімається при виході з екрана або виборі іншої камери.")
+        self.free_limits.toggled.connect(self._on_free_limits)
+        btns.addWidget(self.free_limits)
         btns.addStretch(1)
         btns.addWidget(self.revert_btn)
         btns.addWidget(self.save_btn)
@@ -434,6 +440,7 @@ class ControlScreen(QWidget):
         self.refresh()
 
     def leave(self) -> None:
+        self._release_free_limits(self._current)
         self._active = False
         self._sync_stream()
 
@@ -475,6 +482,7 @@ class ControlScreen(QWidget):
             self.video_info.setStyleSheet("" if sf.has_angles else f"color: {WARN}")
 
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
+        self._release_free_limits(self._current)
         self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
         self._sync_stream()
         if self.calib is not None:
@@ -520,8 +528,7 @@ class ControlScreen(QWidget):
         self.baud.setCurrentIndex(idx if idx >= 0 else self.baud.count() - 1)
         for axis in AXES:
             self.cols[axis].load(getattr(cfg, axis))
-        self.tgt_el.setRange(cfg.tilt.min_deg if cfg.tilt.min_deg is not None else 0.0,
-                             cfg.tilt.max_deg if cfg.tilt.max_deg is not None else 90.0)
+        self._apply_target_range()
 
     # --- оновлення стану ----------------------------------------------------------
     def refresh(self) -> None:
@@ -554,6 +561,8 @@ class ControlScreen(QWidget):
             info = getattr(getattr(self.service.backend, "ros", None), "connection_info", None)
             if info is not None:                 # rosbridge: з яким Pi і чому немає звʼязку
                 err = "; ".join(t for t in (err, info(st.name)) if t)
+        if self.service.limits_free(st.name):
+            err = "; ".join(t for t in ("⚠ Межі кута знято (виставлення нуля)", err) if t)
         self.error_label.setText(err)
         self.error_label.setVisible(bool(err))
         cfg = self.service.config(st.name)
@@ -562,7 +571,7 @@ class ControlScreen(QWidget):
         learning = self.service.is_learning(st.name)
         for w in self._manual_widgets:
             w.setEnabled(st.link_ok and not learning)
-        for w in (self.scan_btn, self.set_id_btn, self.zero_btn):
+        for w in (self.scan_btn, self.set_id_btn, self.zero_btn, self.free_limits):
             w.setEnabled(st.link_ok)
 
     # --- дії --------------------------------------------------------------------------
@@ -603,7 +612,7 @@ class ControlScreen(QWidget):
             return
         if note:
             self._say(note, warn=True)
-        elif self.message.text().startswith("Досягнуто межі"):
+        elif self.message.text().startswith(("Досягнуто межі", "Кінець ходу")):
             self._say("")
 
     def _on_stop(self) -> None:
@@ -682,6 +691,41 @@ class ControlScreen(QWidget):
                 self._say(f"ID не змінено: {e}", error=True)
         self._watch(self.service.set_servo_id(self._current, old, new), report)
 
+    def _on_free_limits(self, on: bool) -> None:
+        if getattr(self, "_loading_free", False) or not self._current:
+            return
+        name = self._current
+
+        def report(f: Future):
+            try:
+                ok, msg = f.result()
+                if not ok:
+                    self._say(f"Pi не прийняв: {msg}", error=True)
+            except Exception as e:  # noqa: BLE001
+                self._say(f"Не надіслано на Pi: {e}", error=True)
+        self._watch(self.service.free_limits(name, on), report)
+        self._apply_target_range()
+        if on:
+            self._say("Межі кута знято: камера може дійти до механічного упору — повертайте малим кроком. "
+                      "Наведіть на горизонт / нуль азимуту і натисніть «Встановити нуль».", warn=True)
+        else:
+            self._say("Межі кута повернуто.")
+
+    def _release_free_limits(self, name: Optional[str]) -> None:
+        """Вихід з екрана або інша камера — межі повертаються."""
+        if name and self.service.limits_free(name):
+            self.service.free_limits(name, False)
+        self._loading_free = True
+        self.free_limits.setChecked(False)
+        self._loading_free = False
+
+    def _apply_target_range(self) -> None:
+        if not self._current:
+            return
+        tilt = self.service.effective_config(self._current).tilt
+        self.tgt_el.setRange(tilt.min_deg if tilt.min_deg is not None else 0.0,
+                             tilt.max_deg if tilt.max_deg is not None else 90.0)
+
     def _on_zero(self, axes) -> None:
         if not self._current:
             return
@@ -693,6 +737,7 @@ class ControlScreen(QWidget):
                     self._say(f"Нуль {AXIS_TITLE[axis].split()[0].lower()} осі: зміщення {value:.2f}°, збережено")
                     if name == self._current:
                         self.cols[axis].zero.setValue(value)
+                        self._apply_target_range()
                 except Exception as e:  # noqa: BLE001
                     self._say(f"Нуль не встановлено: {e}", error=True)
             self._watch(self.service.set_zero(name, axis), report)

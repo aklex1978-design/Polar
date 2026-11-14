@@ -114,3 +114,15 @@ def test_limit_notes():
     assert limit_notes(cfg, 5.0, 95.0) == ["азимут — нижня межа 10°", "кут місця — верхня межа 90°"]
     assert limit_notes(cfg, 100.0, 4.0) == []
     assert limit_notes(cfg, None, 1.0) == ["кут місця — нижня межа 4°"]
+
+
+def test_freed_limits_cover_full_shaft_travel():
+    """«Зняти межі»: межі осі — на весь хід вала 0…360° від поточного нуля; ковзний контакт без змін."""
+    from polar_core.control import CameraControlConfig, ServoSettings
+    t = ServoSettings("tilt", 2, direction=1, zero_offset_deg=30.0, min_deg=0.0, max_deg=90.0)
+    f = t.freed()
+    assert (f.min_deg, f.max_deg) == (-30.0, 330.0) and f.validate() == [] and t.max_deg == 90.0
+    r = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=200.0, min_deg=0.0, max_deg=90.0).freed()
+    assert (r.min_deg, r.max_deg) == (-160.0, 200.0)
+    cfg = CameraControlConfig(1, "К", "camera_1", tilt=t)
+    assert cfg.freed().tilt.min_deg == -30.0 and cfg.freed().pan.min_deg is None and cfg.tilt.min_deg == 0.0

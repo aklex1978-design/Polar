@@ -92,6 +92,16 @@ class ServoSettings:
                           "зміщення нуля (напр. «Встановити нуль» посередині ходу)")
         return errors
 
+    def freed(self) -> "ServoSettings":
+        """Копія з межами на весь хід вала (0…360° у режимі положення) — для виставлення нуля, коли
+        справжнє положення камери лежить за звичайними межами осі. Ковзний контакт — без змін."""
+        from dataclasses import replace
+        if self.continuous or self.min_deg is None or self.max_deg is None:
+            return replace(self)
+        a = self.direction * (0.0 - self.zero_offset_deg) / self.gear_ratio
+        b = self.direction * (360.0 - self.zero_offset_deg) / self.gear_ratio
+        return replace(self, min_deg=round(min(a, b), 3), max_deg=round(max(a, b), 3))
+
     def raw_range(self) -> Tuple[Optional[float], Optional[float]]:
         """Кути вала сервопривода для меж осі (None — без меж, ковзний контакт)."""
         if self.continuous or self.min_deg is None or self.max_deg is None:
@@ -126,6 +136,11 @@ class CameraControlConfig:
     tilt: ServoSettings = field(default_factory=lambda: default_servo("tilt"))
     demo: bool = False             # сервоприводи — імітатор (без ROS 2 і Raspberry Pi)
     host: str = ""                 # адреса Raspberry Pi для rosbridge (з форми камери або з адреси потоку)
+
+    def freed(self) -> "CameraControlConfig":
+        """Копія без програмних меж кута (лише хід вала) — режим «Зняти межі» при виставленні нуля."""
+        from dataclasses import replace
+        return replace(self, pan=self.pan.freed(), tilt=self.tilt.freed())
 
     def validate(self) -> List[str]:
         errors = self.pan.validate() + self.tilt.validate()

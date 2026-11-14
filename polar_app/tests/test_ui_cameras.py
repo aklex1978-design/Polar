@@ -893,3 +893,19 @@ def test_inactive_object_is_excluded(win):
     f.widgets["active"].setChecked(True)
     assert f.save()
     assert rec.name in win.control._items
+
+
+def test_free_limits_checkbox_released_on_leave(win):
+    """«Зняти межі кута»: діє лише поки камера вибрана в «Управлінні»; інша камера або вихід — межі повертаються."""
+    win.stack.setCurrentWidget(win.control)
+    c = win.control
+    first = c._current
+    assert wait(5, lambda: c.free_limits.isEnabled())
+    c.free_limits.setChecked(True)
+    assert win.ctx.control.limits_free(first) and "Межі кута знято" in c.message.text()
+    assert wait(2, lambda: "Межі кута знято" in c.error_label.text())
+    c.select_camera("Камера 2")
+    assert not win.ctx.control.limits_free(first) and not c.free_limits.isChecked()
+    c.free_limits.setChecked(True)
+    win.show_cameras()
+    assert not win.ctx.control.limits_free("Камера 2")

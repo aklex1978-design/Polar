@@ -140,3 +140,39 @@ def test_scan_and_set_id(env):
     cfg.tilt.servo_id = 5
     assert svc.save_config(cfg).result()[0]
     assert not run(0.2)["Камера 1"].error_flags & ctl.ERROR_SERVO_OFFLINE
+
+
+def test_free_limits_for_zeroing(env):
+    """«Зняти межі»: кут місця нижче 0° і вище 90° дозволено; у базі межі ті самі; знову — обмежено."""
+    svc, backend, clock, run = env
+    run(0.2)
+    import copy
+    cfg = copy.deepcopy(svc.config("Камера 1"))
+    cfg.tilt.zero_offset_deg = 180.0                  # горизонт — посередині ходу вала (raw 180°)
+    svc.save_config(cfg)
+    run(0.2)
+    assert svc.go_to("Камера 1", 10.0, -10.0) == pytest.approx((10.0, 0.0))        # межі 0…90°
+    f = svc.free_limits("Камера 1", True)
+    run(0.2)
+    assert f.result(1)[0] and svc.limits_free("Камера 1")
+    assert svc.limit_note("Камера 1", 10.0, -10.0) == ""
+    assert svc.go_to("Камера 1", 10.0, -10.0, 180.0) == pytest.approx((10.0, -10.0))
+    st = run(1.0)["Камера 1"]
+    assert st.elevation_deg == pytest.approx(-10.0, abs=0.2)                    # Pi теж пустив нижче нуля
+    z = svc.set_zero("Камера 1", "tilt")
+    run(0.2)
+    assert z.result(1) == pytest.approx(170.0, abs=0.2)                         # тут тепер нуль (raw 170°)
+    assert svc.config("Камера 1").tilt.min_deg == 0.0                           # межі в базі не змінено
+    svc.free_limits("Камера 1", False)
+    run(0.2)
+    assert svc.go_to("Камера 1", 10.0, 120.0) == pytest.approx((10.0, 90.0))
+
+
+def test_free_limits_stop_at_shaft_end(env):
+    """Нуль на краю ходу вала (raw 0°): нижче нуля вал у режимі положення не піде — напис це показує."""
+    svc, backend, clock, run = env
+    run(0.2)
+    svc.free_limits("Камера 1", True)
+    run(0.2)
+    note = svc.limit_note("Камера 1", 10.0, -10.0)
+    assert note.startswith("Кінець ходу вала") and "нижня межа 0°" in note

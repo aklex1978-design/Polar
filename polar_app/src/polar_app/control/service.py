@@ -29,6 +29,7 @@ class ControlService:
         self._learning: Dict[str, bool] = {}
         self._was_online: Dict[str, bool] = {}
         self._pending_configure: Dict[str, Future] = {}
+        self._free: Dict[str, bool] = {}          # межі кута тимчасово знято (виставлення нуля)
         self.last_configure: Dict[str, Tuple[bool, str]] = {}
         self.reload()
 
@@ -51,6 +52,20 @@ class ControlService:
     def config(self, name: str) -> CameraControlConfig:
         return self._cams[name]
 
+    # --- «Зняти межі» для виставлення нуля ---------------------------------------
+    def effective_config(self, name: str) -> CameraControlConfig:
+        """Налаштування, що діють зараз: зі знятими межами кута, якщо їх тимчасово знято."""
+        cfg = self._cams[name]
+        return cfg.freed() if self._free.get(name) else cfg
+
+    def limits_free(self, name: str) -> bool:
+        return bool(self._free.get(name))
+
+    def free_limits(self, name: str, on: bool) -> Future:
+        """Тимчасово зняти (on) або повернути програмні межі кута камери. У базі межі не змінюються."""
+        self._free[name] = bool(on)
+        return self._push_config(name)
+
     def save_config(self, cfg: CameraControlConfig) -> Future:
         """Зберегти налаштування сервоприводів у базу і надіслати на Pi."""
         with self._db_lock:
@@ -65,7 +80,7 @@ class ControlService:
         self.start()
 
     def _push_config(self, name: str) -> Future:
-        f = self.backend.configure(self._cams[name], self.ros)
+        f = self.backend.configure(self.effective_config(name), self.ros)
         self._pending_configure[name] = f
 
         def remember(fut: Future):
@@ -113,16 +128,24 @@ class ControlService:
         """Азимут від півночі і кут місця. Повертає ціль після обмеження межами (від півночі)."""
         if source in ("manual", "measure"):
             self._check_manual(name)
-        cfg = self._cams[name]
+        cfg = self.effective_config(name)
         az_cam, el = ctl.target_to_camera(cfg, azimuth_deg, elevation_deg)
         self.backend.command(name, az_cam, el, self._speed(name, speed_deg_s))
         return ctl.camera_to_north(cfg, az_cam), el
 
     def limit_note(self, name: str, azimuth_deg: float, elevation_deg: float) -> str:
         """Ціль (азимут від півночі, кут місця) виходить за межі камери — текст для оператора, інакше ''."""
-        cfg = self._cams[name]
+        cfg = self.effective_config(name)
         notes = ctl.limit_notes(cfg, ctl.azimuth_to_sensor(azimuth_deg, cfg.north_offset_deg), elevation_deg)
-        return "Досягнуто межі: " + "; ".join(notes) if notes else ""
+        return self._limit_text(name, notes)
+
+    def _limit_text(self, name: str, notes: List[str]) -> str:
+        if not notes:
+            return ""
+        if self._free.get(name):
+            return ("Кінець ходу вала сервопривода (0…360°): " + "; ".join(notes) + " — далі вал не піде; "
+                    "перенесіть нуль осі ближче до середини ходу")
+        return "Досягнуто межі: " + "; ".join(notes)
 
     def jog(self, name: str, d_azimuth_deg: float, d_elevation_deg: float, speed_deg_s: float = 0.0) -> str:
         """Крок відносно поточного положення. Повертає напис, якщо крок упирається в межу кута, інакше ''."""
@@ -130,10 +153,10 @@ class ControlService:
         note = ""
         snap = self.backend.snapshot(name)
         if snap is not None:
-            notes = ctl.limit_notes(self._cams[name],
+            notes = ctl.limit_notes(self.effective_config(name),
                                     snap.azimuth_deg + d_azimuth_deg if d_azimuth_deg else None,
                                     snap.elevation_deg + d_elevation_deg if d_elevation_deg else None)
-            note = "Досягнуто межі: " + "; ".join(notes) if notes else ""
+            note = self._limit_text(name, notes)
         self.backend.jog(name, d_azimuth_deg, d_elevation_deg, self._speed(name, speed_deg_s))
         return note
 
@@ -162,6 +185,8 @@ class ControlService:
                 with self._db_lock:
                     ctl.save_zero_offset(self.conn, cfg.camera_id, axis, value)
                 getattr(cfg, axis).zero_offset_deg = value
+                if self._free.get(name):              # межі знято — перерахувати хід вала від нового нуля
+                    self._push_config(name)
                 out.set_result(value)
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)
