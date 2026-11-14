@@ -100,11 +100,7 @@ def test_scan_zero_and_change_id(screen):
     wait(0.3)
     s.scan_btn.click()
     assert wait(2, lambda: "ID: 1, 2" in s.message.text()), s.message.text()
-    s.change_servo_id(2, 7)
-    assert wait(2, lambda: "ID змінено" in s.message.text()), s.message.text()
-    s._on_zero(("pan",))
-    assert wait(2, lambda: "збережено" in s.message.text()), s.message.text()
-    asked = []
+    asked = []                                                         # до зміни ID 2 → 7
     s.confirm = lambda text: asked.append(text) or False
     s._on_recenter()
     assert asked and "горизонт" in asked[0]                             # відмова — нічого не змінено
@@ -112,6 +108,10 @@ def test_scan_zero_and_change_id(screen):
     s._on_recenter()
     assert wait(2, lambda: "середину ходу" in s.message.text()), s.message.text()
     assert s.cols["tilt"].zero.value() == 180.0
+    s.change_servo_id(2, 7)
+    assert wait(2, lambda: "ID змінено" in s.message.text()), s.message.text()
+    s._on_zero(("pan",))
+    assert wait(2, lambda: "збережено" in s.message.text()), s.message.text()
 
 
 def test_telemetry_shown(screen):
