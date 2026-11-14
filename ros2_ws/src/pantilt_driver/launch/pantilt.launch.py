@@ -1,4 +1,5 @@
-"""Запуск pantilt_driver для однієї камери: ros2 launch pantilt_driver pantilt.launch.py camera:=camera_1 backend:=sim"""
+"""Запуск pantilt_driver для однієї камери:
+ros2 launch pantilt_driver pantilt.launch.py camera:=camera_1 backend:=st3020 [prefix:=/polar] [params:=…]"""
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -13,14 +14,17 @@ def generate_launch_description():
     camera = LaunchConfiguration("camera")
     backend = LaunchConfiguration("backend")
     params = LaunchConfiguration("params")
+    prefix = LaunchConfiguration("prefix")
     return LaunchDescription([
         DeclareLaunchArgument("camera", default_value="camera_1"),
         DeclareLaunchArgument("backend", default_value="sim", description="sim | st3020"),
         DeclareLaunchArgument("params", default_value=os.path.join(share, "config", "camera_1.yaml")),
+        DeclareLaunchArgument("prefix", default_value="/polar",
+                              description="префікс топіків — як у «Налаштування → ROS 2» на сервері"),
         Node(
             package="pantilt_driver",
             executable="pantilt_node",
-            namespace=PythonExpression(["'/polar/' + '", camera, "'"]),
+            namespace=PythonExpression(["'", prefix, "'.rstrip('/') + '/' + '", camera, "'"]),
             parameters=[params, {"backend": backend}],
             output="screen",
         ),

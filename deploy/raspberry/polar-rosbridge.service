@@ -1,0 +1,19 @@
+[Unit]
+Description=Polar: rosbridge (WebSocket) — звʼязок сервера Polar на Windows з вузлом сервоприводів
+After=network-online.target polar-pantilt.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polar
+Group=polar
+EnvironmentFile=/etc/polar/polar.env
+# той самий ROS_DOMAIN_ID / DDS, що й у polar-pantilt; типи повідомлень Polar — з /opt/polar/ros2_ws
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/polar/ros2_ws/install/setup.bash && \
+  if [ -z "$ROS_DISCOVERY_SERVER" ]; then unset ROS_DISCOVERY_SERVER; fi && \
+  exec ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:="${ROSBRIDGE_PORT:-9090}"'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
