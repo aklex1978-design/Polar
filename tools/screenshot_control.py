@@ -93,9 +93,11 @@ ctx.detection.stop()
 pump(0.5)
 win.calibrate_camera(rec0.id)
 pump(2.0)
-win.calibration.zone_btn.setChecked(True)
-pump(0.3)
 win.grab().save(os.path.join(out_dir, "calibration.png"))
+win.control.tabs.setCurrentIndex(win.control.pano_index)
+win.control.calib.zone_btn.setChecked(True)
+pump(0.3)
+win.grab().save(os.path.join(out_dir, "panorama_mask.png"))
 
 win.edit_camera(None)
 f = win.form
