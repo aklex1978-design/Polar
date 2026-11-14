@@ -60,8 +60,11 @@ hw_ok() {   # апаратний кодер Pi 4 (bcm2835-codec) доступн�
   ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=${SIZE}:rate=${FPS}" -frames:v 5 \
     -vf format=yuv420p -c:v h264_v4l2m2m -b:v "$BITRATE" -f null - >/dev/null 2>&1
 }
+W=${SIZE%x*}
 if [ "$ENCODER" = "auto" ]; then
-  if hw_ok; then ENCODER=h264_v4l2m2m; else ENCODER=libx264; fi
+  # апаратний кодер Pi вирівнює рядок кадру на 32 пікселі: ширина 720 (PAL/NTSC) дає нахилені смуги
+  # і зелену смугу внизу — для такої ширини програмний libx264 (Pi 4 тягне 720×576 без проблем)
+  if [ $((W % 32)) -eq 0 ] && hw_ok; then ENCODER=h264_v4l2m2m; else ENCODER=libx264; fi
 fi
 if [ "$ENCODER" = "h264_v4l2m2m" ]; then
   # апаратний кодер не приймає -g; ключовий кадр — щосекунди, щоб сервер швидко отримував перший кадр
