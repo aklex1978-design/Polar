@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Optional
 
 from .backend import ServoBackend
@@ -188,6 +189,23 @@ class ST3020Bus(ServoBackend):
         self._write(new_id, REG_LOCK, bytes([1]))
         if not self.ping(new_id):
             raise IOError(f"після зміни сервопривід не відповідає з ID {new_id}")
+
+    def recenter(self, servo_id: int) -> float:
+        """Калібрування середини Feetech ST/STS: запис 128 у регістр моменту (40) робить поточне положення
+        вала серединою ходу — 2048 кроків (180°); зміщення зберігається в самому сервоприводі.
+        Момент на мить вимикається, а ціль ставиться в нове поточне положення — щоб вал не смикнувся
+        до старої цілі. Повертає новий кут вала (≈180°)."""
+        if not self._write(servo_id, REG_TORQUE_ENABLE, bytes([0])):
+            raise IOError(f"сервопривід {servo_id} не відповідає")
+        self._write(servo_id, REG_TORQUE_ENABLE, bytes([128]))
+        time.sleep(0.15)
+        reading = self.read(servo_id)
+        if reading is None:
+            raise IOError(f"сервопривід {servo_id} не відповів після калібрування середини")
+        pos = encode_signed15(int(round(reading.raw_deg / DEG_PER_STEP)))
+        self._write(servo_id, REG_GOAL_POSITION, bytes([pos & 0xFF, pos >> 8]))
+        self._write(servo_id, REG_TORQUE_ENABLE, bytes([1]))
+        return reading.raw_deg
 
     def rebase(self, servo_id: int, turns: int) -> None:
         # TODO: verify — спосіб скинути лічильник обертів без руху вала залежить від прошивки ST3020

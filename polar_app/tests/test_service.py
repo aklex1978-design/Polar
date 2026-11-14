@@ -176,3 +176,20 @@ def test_free_limits_stop_at_shaft_end(env):
     run(0.2)
     note = svc.limit_note("Камера 1", 10.0, -10.0)
     assert note.startswith("Кінець ходу вала") and "нижня межа 0°" in note
+
+
+def test_recenter_zero(env):
+    """«Нуль + середина ходу»: вал вертикального сервопривода — 180°, нуль у базі 180°; нижче горизонту — можна."""
+    svc, backend, clock, run = env
+    run(0.2)
+    z = svc.set_zero("Камера 1", "tilt", recenter=True)
+    run(0.2)
+    assert z.result(1) == pytest.approx(180.0)
+    assert svc.config("Камера 1").tilt.zero_offset_deg == pytest.approx(180.0)
+    with svc._db_lock:
+        row = svc.conn.execute("SELECT zero_offset_deg FROM servo_settings s JOIN cameras c ON c.id = s.camera_id "
+                               "WHERE c.name = 'Камера 1' AND s.axis = 'tilt'").fetchone()
+    assert row[0] == pytest.approx(180.0)
+    svc.free_limits("Камера 1", True)
+    run(0.2)
+    assert svc.limit_note("Камера 1", 10.0, -10.0) == ""                      # хід вала тепер ±180° від нуля

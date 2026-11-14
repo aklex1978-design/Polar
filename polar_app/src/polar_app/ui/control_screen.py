@@ -392,6 +392,11 @@ class ControlScreen(QWidget):
         menu = QMenu(self.zero_btn)
         for text, axes in (("Обидві осі", AXES), (AXIS_TITLE["pan"], ("pan",)), (AXIS_TITLE["tilt"], ("tilt",))):
             menu.addAction(text).triggered.connect(lambda _=False, a=axes: self._on_zero(a))
+        menu.addSeparator()
+        self.recenter_action = menu.addAction("Вертикальний: нуль + середина ходу сервопривода…")
+        self.recenter_action.setToolTip("Програмно перевизначити нуль сервопривода: поточне положення стає серединою "
+                                        "ходу вала (180°), тож від нуля кут місця може йти і вниз, і вгору")
+        self.recenter_action.triggered.connect(self._on_recenter)
         self.zero_btn.setMenu(menu)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.clicked.connect(self._on_save)
@@ -726,7 +731,20 @@ class ControlScreen(QWidget):
         self.tgt_el.setRange(tilt.min_deg if tilt.min_deg is not None else 0.0,
                              tilt.max_deg if tilt.max_deg is not None else 90.0)
 
-    def _on_zero(self, axes) -> None:
+    def confirm(self, text: str) -> bool:
+        from PyQt6.QtWidgets import QMessageBox
+        return QMessageBox.question(self, "Середина ходу сервопривода", text) == QMessageBox.StandardButton.Yes
+
+    def _on_recenter(self) -> None:
+        if not self._current:
+            return
+        if not self.confirm("Поточне положення вертикального сервопривода стане серединою його ходу (180°) і "
+                            "нулем кута місця. Наведіть камеру точно на горизонт перед цим.\n\n"
+                            "На мить (≈0,2 с) момент вимкнеться — камера може трохи просісти. Продовжити?"):
+            return
+        self._on_zero(("tilt",), recenter=True)
+
+    def _on_zero(self, axes, recenter: bool = False) -> None:
         if not self._current:
             return
         name = self._current
@@ -734,10 +752,12 @@ class ControlScreen(QWidget):
             def report(f: Future, axis=axis):
                 try:
                     value = f.result()
-                    self._say(f"Нуль {AXIS_TITLE[axis].split()[0].lower()} осі: зміщення {value:.2f}°, збережено")
+                    what = "середину ходу сервопривода і нуль" if recenter else "нуль"
+                    self._say(f"{AXIS_TITLE[axis].split()[0]} вісь: {what} встановлено, зміщення нуля {value:.2f}°, "
+                              "збережено")
                     if name == self._current:
                         self.cols[axis].zero.setValue(value)
                         self._apply_target_range()
                 except Exception as e:  # noqa: BLE001
                     self._say(f"Нуль не встановлено: {e}", error=True)
-            self._watch(self.service.set_zero(name, axis), report)
+            self._watch(self.service.set_zero(name, axis, recenter), report)

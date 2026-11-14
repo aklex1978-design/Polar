@@ -83,6 +83,7 @@ def test_services(svc):
     assert svc.scan("Камера 7", 1, 5).result(timeout=25) == [1, 2]
     zero = svc.set_zero("Камера 7", "tilt").result(timeout=5)
     assert zero == pytest.approx(40.0, abs=0.2)
+    assert svc.set_zero("Камера 7", "tilt", recenter=True).result(timeout=5) == pytest.approx(180.0)
     cfg = svc.config("Камера 7")
     cfg.tilt.max_deg = 45.0
     assert svc.save_config(cfg).result(timeout=5) == (True, "налаштування застосовано")

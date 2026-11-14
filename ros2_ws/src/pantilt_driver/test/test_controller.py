@@ -185,3 +185,20 @@ def test_scan_and_set_id():
         backend.set_id(1, 7)
     with pytest.raises(KeyError):
         backend.set_id(3, 8)
+
+
+def test_zero_here_with_recenter():
+    """Середина ходу: вал тут стає 180°, нуль кута місця = 180°; нижче горизонту тепер можна (межі — від нуля)."""
+    ctrl, backend, clock = make()
+    backend.servos[2].raw_deg = backend.servos[2].goal_deg = 0.5        # горизонт біля краю ходу вала
+    run(ctrl, clock, 0.1)
+    assert ctrl.zero_here("tilt", recenter=True) == pytest.approx(180.0)
+    assert backend.servos[2].raw_deg == pytest.approx(180.0) and ctrl.tilt.zero_offset_deg == pytest.approx(180.0)
+    st = run(ctrl, clock, 0.1)
+    assert st.elevation_deg == pytest.approx(0.0)
+    ctrl.tilt.min_deg = -20.0                                           # межі нижче горизонту — вал не впирається
+    ctrl.command(0.0, -10.0, 180.0)
+    st = run(ctrl, clock, 1.0)
+    assert st.elevation_deg == pytest.approx(-10.0) and backend.servos[2].raw_deg == pytest.approx(170.0)
+    with pytest.raises(ValueError, match="ковзним контактом"):
+        ctrl.zero_here("pan", recenter=True)

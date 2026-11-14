@@ -143,3 +143,18 @@ def test_set_id_writes_unlock_id_lock():
     present.add(3)
     with pytest.raises(ValueError):
         bus.set_id(9, 3)          # зайнятий
+
+
+def test_recenter_sequence():
+    """Калібрування середини: момент вимк. → 128 у регістр 40 → ціль = нове положення → момент увімк."""
+    block = bytearray(st3020.STATUS_BLOCK_LEN)
+    reg = st3020.REG_PRESENT_POSITION - st3020.STATUS_BLOCK_START
+    block[reg], block[reg + 1] = 2048 & 0xFF, 2048 >> 8
+
+    def reply(pkt):
+        return status(pkt[2], bytes(block) if pkt[4] == st3020.INST_READ else b"")
+    bus = make_bus(reply)
+    assert bus.recenter(2) == pytest.approx(180.0)
+    writes = [(p[5], p[6:-1]) for p in bus._serial.written if p[4] == st3020.INST_WRITE]
+    assert writes == [(st3020.REG_TORQUE_ENABLE, b"\x00"), (st3020.REG_TORQUE_ENABLE, bytes([128])),
+                      (st3020.REG_GOAL_POSITION, bytes([0x00, 0x08])), (st3020.REG_TORQUE_ENABLE, b"\x01")]

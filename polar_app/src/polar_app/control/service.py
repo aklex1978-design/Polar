@@ -174,8 +174,9 @@ class ControlService:
     def set_servo_id(self, name: str, old_id: int, new_id: int) -> Future:
         return self.backend.set_servo_id(name, old_id, new_id)
 
-    def set_zero(self, name: str, axis: str) -> Future:
-        """Поточне положення осі стає нулем; нове зміщення записується в базу."""
+    def set_zero(self, name: str, axis: str, recenter: bool = False) -> Future:
+        """Поточне положення осі стає нулем; нове зміщення записується в базу.
+        recenter — спершу перенести сюди середину ходу сервопривода (вал = 180°, нуль осі = 180°)."""
         cfg = self._cams[name]
         out: Future = Future()
 
@@ -190,5 +191,5 @@ class ControlService:
                 out.set_result(value)
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)
-        self.backend.set_zero(name, axis).add_done_callback(saved)
+        self.backend.set_zero(name, axis, recenter).add_done_callback(saved)
         return out

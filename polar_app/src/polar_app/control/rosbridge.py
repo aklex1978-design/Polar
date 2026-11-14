@@ -521,12 +521,15 @@ class RosbridgeControlBackend(ControlBackend):
         return self._call(name, "scan", S_SCAN, {"first_id": int(first_id), "last_id": int(last_id)},
                           lambda v: _ids(v.get("ids")), timeout_s=20.0)   # 253 ID × тайм-аут PING
 
-    def set_zero(self, name, axis) -> Future:
+    def set_zero(self, name, axis, recenter=False) -> Future:
         def convert(v):
             if not v.get("success"):
                 raise RuntimeError(v.get("message", ""))
             return float(v.get("zero_offset_deg", 0.0))
-        return self._call(name, "set_zero", S_SET_ZERO, {"axis": axis}, convert)
+        args = {"axis": axis}
+        if recenter:                     # поле є лише в нових Pi; без нього запит сумісний зі старими
+            args["recenter"] = True
+        return self._call(name, "set_zero", S_SET_ZERO, args, convert)
 
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", S_SET_ID, {"old_id": int(old_id), "new_id": int(new_id)},

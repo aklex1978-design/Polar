@@ -69,11 +69,19 @@ class PanTiltController:
             self.backend.set_torque_limit(cfg.servo_id, cfg.torque_limit_pct)
         self.update()
 
-    def zero_here(self, axis: str) -> float:
-        """Поточне положення осі стає нулем камери. Повертає нове зміщення нуля (кут вала)."""
+    def zero_here(self, axis: str, recenter: bool = False) -> float:
+        """Поточне положення осі стає нулем камери. Повертає нове зміщення нуля (кут вала).
+
+        recenter: спершу перенести середину ходу сервопривода сюди (вал = 180°), щоб від нуля вісь могла
+        йти в обидва боки (кут місця нижче горизонту). Лише для осі з межами (режим положення)."""
         cfg = {"pan": self.pan, "tilt": self.tilt}.get(axis)
         if cfg is None:
             raise ValueError("axis має бути 'pan' або 'tilt'")
+        if recenter:
+            if cfg.continuous:
+                raise ValueError("азимут з ковзним контактом не має кінців ходу — середину переносити не треба")
+            self._halt()
+            self.backend.recenter(cfg.servo_id)
         reading = self.backend.read(cfg.servo_id)
         if reading is None:
             raise IOError(f"сервопривід {cfg.servo_id} не відповідає")

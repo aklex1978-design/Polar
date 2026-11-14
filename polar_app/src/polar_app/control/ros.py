@@ -195,12 +195,12 @@ class RosControlBackend(ControlBackend):
         return self._call(name, "scan", ScanServos.Request(first_id=first_id, last_id=last_id),
                           lambda r: list(r.ids), timeout_s=20.0)  # 253 ID × тайм-аут PING
 
-    def set_zero(self, name, axis) -> Future:
+    def set_zero(self, name, axis, recenter=False) -> Future:
         def convert(r):
             if not r.success:
                 raise RuntimeError(r.message)
             return r.zero_offset_deg
-        return self._call(name, "set_zero", SetZero.Request(axis=axis), convert)
+        return self._call(name, "set_zero", SetZero.Request(axis=axis, recenter=bool(recenter)), convert)
 
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", SetServoId.Request(old_id=old_id, new_id=new_id),

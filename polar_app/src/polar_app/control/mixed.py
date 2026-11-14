@@ -81,8 +81,8 @@ class MixedControlBackend(ControlBackend):
     def scan(self, name, first_id=1, last_id=253) -> Future:
         return self._call(name, "scan", name, first_id, last_id)
 
-    def set_zero(self, name, axis) -> Future:
-        return self._call(name, "set_zero", name, axis)
+    def set_zero(self, name, axis, recenter=False) -> Future:
+        return self._call(name, "set_zero", name, axis, recenter)
 
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", name, old_id, new_id)

@@ -258,6 +258,9 @@ def test_services(pi, backend):
     assert call["type"] == rb.S_CONFIGURE and call["args"]["pan"]["id"] == 1 and call["args"]["tilt"]["id"] == 2
     assert call["args"]["link_timeout_s"] == pytest.approx(0.4)
     assert backend.set_zero("Камера 1", "pan").result(3) == pytest.approx(12.5)
+    assert backend.set_zero("Камера 1", "tilt", recenter=True).result(3) == pytest.approx(12.5)
+    zs = [m["args"] for m in pi.ops if m.get("op") == "call_service" and m["service"].endswith("set_zero")]
+    assert zs == [{"axis": "pan"}, {"axis": "tilt", "recenter": True}]     # старим Pi поле не надсилається
     assert backend.set_servo_id("Камера 1", 1, 2).result(3) == (False, "ID 2 вже зайнятий")
 
 
