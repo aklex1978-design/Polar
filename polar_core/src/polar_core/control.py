@@ -85,7 +85,20 @@ class ServoSettings:
             errors.append("нижня межа кута має бути меншою за верхню")
         if self.axis == "tilt" and self.min_deg is None:
             errors.append("для кута місця межі обовʼязкові")
+        lo, hi = self.raw_range()
+        if lo is not None and (lo < -0.5 or hi > 360.5):
+            errors.append(f"з цими напрямком, нулем і передавальним числом вал має пройти {lo:.0f}…{hi:.0f}°, "
+                          "а сервопривід у режимі положення працює лише в 0…360° — змініть напрямок або "
+                          "зміщення нуля (напр. «Встановити нуль» посередині ходу)")
         return errors
+
+    def raw_range(self) -> Tuple[Optional[float], Optional[float]]:
+        """Кути вала сервопривода для меж осі (None — без меж, ковзний контакт)."""
+        if self.continuous or self.min_deg is None or self.max_deg is None:
+            return None, None
+        a = self.zero_offset_deg + self.direction * self.min_deg * self.gear_ratio
+        b = self.zero_offset_deg + self.direction * self.max_deg * self.gear_ratio
+        return min(a, b), max(a, b)
 
     def clamp(self, axis_deg: float) -> float:
         if self.min_deg is not None:

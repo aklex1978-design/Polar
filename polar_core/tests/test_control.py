@@ -92,3 +92,15 @@ def test_camera_status(conn):
     assert not c.camera_status(cfg, snap, 11.5, 2.0).link_ok
     snap.error_flags = c.ERROR_LINK_TIMEOUT
     assert not c.camera_status(cfg, snap, 10.0, 2.0).link_ok
+
+
+def test_servo_raw_range_must_fit_position_mode():
+    """Вертикальний ST3020 (режим положення) — вал лише 0…360°: зворотний напрямок із нулем 0 недопустимий."""
+    from polar_core.control import ServoSettings
+    ok = ServoSettings("tilt", 2, direction=1, zero_offset_deg=0.0, min_deg=0.0, max_deg=90.0)
+    assert ok.validate() == [] and ok.raw_range() == (0.0, 90.0)
+    bad = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=0.0, gear_ratio=0.6, min_deg=4.0, max_deg=90.0)
+    assert any("0…360" in e for e in bad.validate())
+    fixed = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=180.0, min_deg=0.0, max_deg=90.0)
+    assert fixed.validate() == [] and fixed.raw_range() == (90.0, 180.0)
+    assert ServoSettings("pan", 1, direction=-1).raw_range() == (None, None)          # ковзний контакт
