@@ -92,6 +92,15 @@ def test_read_decodes_status_block():
     assert r.current_a == pytest.approx(0.65)
 
 
+def test_load_direction_bit():
+    """Навантаження ST3020: біт 10 — напрямок; 1064 (0x428) — це −4,0 %, а не 106,4 %."""
+    block = bytearray(st3020.STATUS_BLOCK_LEN)
+    reg = st3020.REG_PRESENT_LOAD - st3020.STATUS_BLOCK_START
+    block[reg], block[reg + 1] = 1064 & 0xFF, 1064 >> 8
+    r = make_bus(lambda pkt: status(pkt[2], bytes(block))).read(1)
+    assert r.load_pct == pytest.approx(-4.0)
+
+
 def test_read_no_reply_is_none():
     assert make_bus(lambda pkt: b"").read(5) is None
 

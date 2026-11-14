@@ -1,0 +1,13 @@
+[Unit]
+Description=Polar: налаштування камери з boot-розділу (polar.env, pantilt.yaml)
+After=local-fs.target network-pre.target
+Before=polar-pantilt.service polar-video.service polar-rosbridge.service
+ConditionPathExists=/boot/firmware/polar.env
+
+[Service]
+Type=oneshot
+ExecStart=/opt/polar/polar-firstboot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

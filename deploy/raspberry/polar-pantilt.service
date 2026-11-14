@@ -1,0 +1,21 @@
+[Unit]
+Description=Polar: вузол ROS 2 керування сервоприводами камери (pantilt_driver)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polar
+Group=polar
+SupplementaryGroups=dialout
+EnvironmentFile=/etc/polar/polar.env
+# ROS 2 Humble + зібраний робочий простір Polar; простір імен — <TOPIC_PREFIX>/<CAMERA_NS>
+ExecStart=/bin/bash -c 'source /opt/ros/humble/setup.bash && source /opt/polar/ros2_ws/install/setup.bash && \
+  if [ -z "$ROS_DISCOVERY_SERVER" ]; then unset ROS_DISCOVERY_SERVER; fi && \
+  exec ros2 launch pantilt_driver pantilt.launch.py camera:="$CAMERA_NS" prefix:="$TOPIC_PREFIX" \
+       backend:="$SERVO_BACKEND" params:=/etc/polar/pantilt.yaml'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
