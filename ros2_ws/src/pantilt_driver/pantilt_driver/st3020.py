@@ -174,7 +174,7 @@ class ST3020Bus(ServoBackend):
         self._write(servo_id, REG_TORQUE_LIMIT, bytes([value & 0xFF, value >> 8]))
 
     def set_id(self, old_id: int, new_id: int) -> None:
-        # TODO: verify — адреси ID (5) і блокування EEPROM (55) взято з протоколу Feetech STS.
+        # адреси ID (5) і блокування EEPROM (55) перевірено на ST3020 (зміна ID 1 → 2)
         if not 1 <= new_id <= 253:
             raise ValueError("ID має бути 1..253")
         if self.ping(new_id):

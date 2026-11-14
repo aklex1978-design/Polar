@@ -51,10 +51,13 @@ else
 fi
 systemctl restart chrony 2>/dev/null || true
 
-systemctl restart polar-pantilt.service || true
+# --no-block: під час завантаження служби Polar стартують ПІСЛЯ цієї (Before= у polar-firstboot.service);
+# синхронний restart чекав би на них, а вони — на неї, і завантаження зависало б (взаємне блокування)
+systemctl --no-block restart polar-pantilt.service || true
 if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
-  systemctl enable polar-video.service && systemctl restart polar-video.service || true
+  systemctl enable polar-video.service && systemctl --no-block restart polar-video.service || true
 else
-  systemctl disable --now polar-video.service 2>/dev/null || true
+  systemctl disable polar-video.service 2>/dev/null || true
+  systemctl --no-block stop polar-video.service || true
 fi
 echo "Polar: камера ${TOPIC_PREFIX:-/polar}/${CAMERA_NS:-?}, відео ${VIDEO_ENABLED:-1}, потік ${RTSP_PATH:-}"
