@@ -243,9 +243,9 @@ def host_from_url(url: str) -> str:
 
 
 def load_control_configs(conn: sqlite3.Connection) -> List[CameraControlConfig]:
-    """Камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
+    """Активні камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
     cams = conn.execute("SELECT id, name, ros_namespace, north_offset_deg, servo_port, servo_baudrate, "
-                        "demo_servos, pi_host, stream_url FROM cameras ORDER BY id").fetchall()
+                        "demo_servos, pi_host, stream_url FROM cameras WHERE active = 1 ORDER BY id").fetchall()
     result = []
     for c in cams:
         cfg = CameraControlConfig(camera_id=c[0], name=c[1], namespace=c[2] or f"camera_{c[0]}",

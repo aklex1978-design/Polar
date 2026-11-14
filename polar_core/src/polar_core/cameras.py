@@ -62,6 +62,7 @@ class CameraRecord:
     # Демо: імітатор замість справжнього пристрою
     demo_servos: bool = False               # сервоприводи й Raspberry Pi — імітатор, без ROS 2
     demo_video: bool = False                # синтетична сцена замість відеопотоку
+    active: bool = True                     # неактивна — не підключається і не бере участі в роботі
     # службове
     id: Optional[int] = None
     has_password: bool = False
@@ -172,7 +173,7 @@ _COLS = {
     "max_detection_latency_ms": "max_detection_latency_ms", "transport": "stream_transport",
     "buffer_ms": "stream_buffer_ms", "video_latency_ms": "stream_latency_ms",
     "ros_namespace": "ros_namespace", "pi_host": "pi_host", "panorama_path": "panorama_path",
-    "demo_servos": "demo_servos", "demo_video": "demo_video",
+    "demo_servos": "demo_servos", "demo_video": "demo_video", "active": "active",
 }
 
 
@@ -196,6 +197,7 @@ def get_camera(conn: sqlite3.Connection, camera_id: int) -> CameraRecord:
     for i, attr in enumerate(_COLS):
         setattr(rec, attr, row[i])
     rec.demo_servos, rec.demo_video = bool(rec.demo_servos), bool(rec.demo_video)
+    rec.active = bool(rec.active)
     rec.has_password = bool(row[len(_COLS)])
     rec.panorama_stale = bool(row[len(_COLS) + 1])
     pan, tilt = _servo_row(conn, camera_id, "pan"), _servo_row(conn, camera_id, "tilt")

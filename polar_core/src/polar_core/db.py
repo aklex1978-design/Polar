@@ -199,6 +199,11 @@ MIGRATIONS = [
     """
     ALTER TABLE cameras ADD COLUMN pi_host TEXT NOT NULL DEFAULT '';
     """,
+    # 10 — обʼєкт управління активний: неактивний не підключається (відео, керування) і не показується
+    # в «Обʼєкти управління / Управління», «Робота / Обʼєкти управління», виявленні й на карті роботи
+    """
+    ALTER TABLE cameras ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

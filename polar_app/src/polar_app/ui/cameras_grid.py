@@ -91,7 +91,7 @@ class CamerasGridScreen(QWidget):
         self.timer.start(150)
 
     def enter(self) -> None:
-        recs = self.ctx.records()
+        recs = self.ctx.active_records()
         for t in self.tiles.values():
             t.setParent(None)
         self.tiles = {}
@@ -158,7 +158,7 @@ class CamerasGridScreen(QWidget):
         if not self.isVisible():
             return
         learning_on = self.ctx.learning.is_running()
-        for rec in self.ctx.records():
+        for rec in self.ctx.active_records():
             tile = self.tiles.get(rec.name)
             if tile is None:
                 continue

@@ -855,3 +855,26 @@ def test_events_screen_status_bar_and_error_dialog(win, tmp_path):
     wait(0.2)
     assert win.last_error_box.text() == "RuntimeError: тест" and "polar.log" in win.last_error_box.informativeText()
     win.last_error_box.close()
+
+
+def test_inactive_object_is_excluded(win):
+    """«Активна» = ні: камера лишається у списку, але не підключається і не показується в керуванні й роботі."""
+    rec = win.ctx.records()[2]
+    win.edit_camera(rec.id)
+    f = win.form
+    assert f.widgets["active"].isChecked()
+    f.widgets["active"].setChecked(False)
+    assert f.save()
+    assert not win.ctx.camera(rec.id).active
+    assert rec.name not in win.control._items                          # «Обʼєкти управління / Управління»
+    assert rec.name not in win.ctx.control.camera_names()
+    assert not win.ctx.video.acquire(rec.name) and not win.ctx.video.is_running(rec.name)
+    win.stack.setCurrentWidget(win.grid)                                # «Робота / Обʼєкти управління»
+    assert rec.name not in win.grid.tiles and len(win.grid.tiles) == 2
+    win.show_cameras()
+    t = win.cameras.table
+    assert t.item(2, 0).text() == f"{rec.name} · неактивна" and not t.cellWidget(2, 2).isEnabled()
+    win.edit_camera(rec.id)                                             # увімкнути знову
+    f.widgets["active"].setChecked(True)
+    assert f.save()
+    assert rec.name in win.control._items

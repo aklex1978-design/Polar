@@ -365,7 +365,7 @@ class CameraTriangles:
         return self.last_az.get(rec.name, rec.north_offset_deg), online
 
     def __call__(self, p: QPainter, view: "MapView") -> None:
-        for rec in self.ctx.records():
+        for rec in self.ctx.active_records():
             if rec.latitude is None or rec.longitude is None:
                 continue
             apex = view.to_screen(rec.latitude, rec.longitude)

@@ -76,3 +76,20 @@ def test_validation_and_delete(tmp_path):
     mid2, _ = cmod.save_model(conn, cmod.CameraModelSpec("Зайва", 60, 34))
     cmod.delete_model(conn, mid2)
     assert [m.name for m in cmod.list_models(conn)] == ["Тепловізор"]
+
+
+def test_active_flag(tmp_path):
+    """Неактивна камера зберігається, але не потрапляє в керування (load_control_configs)."""
+    from polar_core import control as ctl
+    conn = db.connect(tmp_path / "a.sqlite")
+    mid, _ = cmod.save_model(conn, cmod.CameraModelSpec("М", 30, 20))
+    box = SecretBox(Fernet.generate_key())
+    ids = []
+    for i, active in ((1, True), (2, False)):
+        rec = cm.CameraRecord(name=f"К{i}", model_id=mid, latitude=50.0, longitude=30.0, altitude_m=100,
+                              address=f"rtsp://10.0.0.{i}/s", stream_res_x=720, stream_res_y=480,
+                              ros_namespace=f"camera_{i}", active=active)
+        ids.append(cm.save_camera(conn, rec, box)[0])
+    assert cm.get_camera(conn, ids[0]).active and not cm.get_camera(conn, ids[1]).active
+    assert [c.name for c in ctl.load_control_configs(conn)] == ["К1"]
+    assert [r.name for r in cm.list_cameras(conn)] == ["К1", "К2"]

@@ -204,7 +204,7 @@ class TargetService:
                 for r in tt.target.rays:
                     member[r.key] = tt
             out = []
-            for rec in self.ctx.records():
+            for rec in self.ctx.active_records():
                 t, obs = self._obs.get(rec.name, (0.0, []))
                 fresh = [o for o in obs if now - t <= self.FRESH_S]
                 if not fresh:

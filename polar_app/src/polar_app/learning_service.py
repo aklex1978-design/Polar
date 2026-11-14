@@ -96,7 +96,7 @@ class LearningService:
             self._pano.pop(name, None)
 
     def _rec(self, name: str):
-        return next((r for r in self.ctx.records() if r.name == name), None)
+        return next((r for r in self.ctx.active_records() if r.name == name), None)
 
     def _save(self, rec, pano: Panorama) -> str:
         path = self.panorama_path(rec)
@@ -125,7 +125,7 @@ class LearningService:
     def start(self, names: Optional[List[str]] = None) -> List[str]:
         """Почати Навчання камер (усіх на звʼязку, якщо names не задано). Повертає, які запущено."""
         started = []
-        for rec in self.ctx.records():
+        for rec in self.ctx.active_records():
             if names is not None and rec.name not in names:
                 continue
             if self.is_running(rec.name):

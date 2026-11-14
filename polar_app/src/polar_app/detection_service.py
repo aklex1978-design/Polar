@@ -74,7 +74,7 @@ class DetectionService:
         self.mode = ModeMachine(self.settings.hold_s)
         self._stop = threading.Event()
         names = []
-        for rec in self.ctx.records():
+        for rec in self.ctx.active_records():
             if self.ctx.learning.panorama(rec.name) is None:
                 self.cams[rec.name] = CameraDetection(state="немає панорами — потрібне Навчання")
                 continue
@@ -86,7 +86,7 @@ class DetectionService:
             self._threads[rec.name] = t
             names.append(rec.name)
         if names:
-            self.targets.start(self.ctx.records(), self.settings)
+            self.targets.start(self.ctx.active_records(), self.settings)
             self.mode.start_tracking()
             self._log(None, "mode", "Слідкування: " + ", ".join(names))
             for t in self._threads.values():
