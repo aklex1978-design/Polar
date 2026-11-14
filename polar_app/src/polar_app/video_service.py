@@ -284,18 +284,28 @@ class VideoService:
         backend = self.control.backend
 
         def run():
-            frames, display, states, seen = [], [], [], [0]
+            raw, display, states, seen, deltas = [], [], [], [0], []
             enabled = False
-            wall_minus_mono = time.time() - time.monotonic()
 
             def on_frame(sf):
+                # monotonic ↔ настінний годинник: різниця усереднюється по всіх кадрах (на Windows
+                # monotonic має крок ~15,6 мс — один замір дав би зсув до цього кроку)
+                deltas.append(time.time() - time.monotonic())
                 seen[0] += 1
                 v = read_strip(sf.image)
-                if v is None:
-                    return
-                arrived = sf.t + wall_minus_mono                  # час сервера, коли кадр отримано
-                pi_ms = unwrap(v, (arrived + offset) * 1000.0)
-                frames.append(arrived * 1000.0 - (pi_ms - offset * 1000.0))
+                if v is not None:
+                    raw.append((sf.t, v))
+
+            def frames_ms():
+                if not deltas or not raw:
+                    return []
+                wall_minus_mono = sum(deltas) / len(deltas)
+                out_ms = []
+                for t, v in raw:
+                    arrived = t + wall_minus_mono                 # час сервера, коли кадр отримано
+                    pi_ms = unwrap(v, (arrived + offset) * 1000.0)
+                    out_ms.append(arrived * 1000.0 - (pi_ms - offset * 1000.0))
+                return out_ms
             try:
                 samples = []
                 for _ in range(clock_samples):
@@ -309,18 +319,19 @@ class VideoService:
                 enabled = True
                 pipe.subscribers.append(on_frame)
                 start = time.monotonic()
-                while not frames and time.monotonic() - start < settle_s:
+                while not raw and time.monotonic() - start < settle_s:
                     time.sleep(0.1)
-                if not frames:
+                if not raw:
                     raise RuntimeError(f"мітки часу в кадрах не зʼявились за {settle_s:.0f} с — оновіть Pi "
                                        "(install.sh) або перевірте службу polar-video-ts")
                 time.sleep(0.5)                                   # перші кадри після перезапуску — пропустити
-                frames.clear()
+                raw.clear()
+                deltas.clear()
                 seen[0] = 0
                 self._display_log[name] = display
                 self._state_log[name] = (offset, states)
                 time.sleep(duration_s)
-                out.set_result(StageReport(offset * 1000.0, rtt * 500.0, stat(frames), stat(display),
+                out.set_result(StageReport(offset * 1000.0, rtt * 500.0, stat(frames_ms()), stat(display),
                                            stat(states), seen[0]))
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)

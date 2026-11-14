@@ -185,7 +185,7 @@ def test_measure_stages_sim(env):
     finally:
         stop.set()
     assert r.clock_offset_ms == pytest.approx(500, abs=15) and r.clock_error_ms < 10
-    assert r.pi_to_polar is not None and 55 <= r.pi_to_polar.median <= 120, r.pi_to_polar
+    assert r.pi_to_polar is not None and 50 <= r.pi_to_polar.median <= 120, r.pi_to_polar   # 60 мс ± крок годинника
     assert r.polar_to_screen is not None and 15 <= r.polar_to_screen.median <= 120, r.polar_to_screen
     assert r.angles is not None and r.angles.median == pytest.approx(5, abs=5)
     assert not backend.timestamps["Камера 1"]                        # після вимірювання мітку вимкнено
