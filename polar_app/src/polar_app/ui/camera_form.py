@@ -548,13 +548,18 @@ class CameraForm(QWidget):
         def report(f):
             self.latency_btn.setEnabled(True)
             try:
-                ms, q = f.result()
+                ms, q, rates = f.result()
             except Exception as e:  # noqa: BLE001
                 self._say(f"Затримку не виміряно: {e}", BAD)
                 return
             self.widgets["video_latency_ms"].setValue(ms)
             self.rec.video_latency_ms = ms
-            self._say(f"Затримка відео відносно датчика: {ms} мс (збіг {q:.2f}); збережено.", GOOD)
+            tail = ""
+            if rates:
+                stream, unique = rates
+                tail = (f" Потік: {stream:.0f} кадрів/с; камера оновлює зображення: {unique:.0f} разів/с"
+                        + (" — частина кадрів повторюється." if unique < 0.8 * stream else "."))
+            self._say(f"Затримка відео відносно датчика: {ms} мс (збіг {q:.2f}); збережено.{tail}", GOOD)
         self.bridge.watch(fut, report)
 
     def measure_stages(self) -> None:

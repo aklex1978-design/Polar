@@ -14,7 +14,7 @@ from polar_core import cameras as cm
 from polar_core.angles import wrap180
 from polar_core.cameras import CameraRecord
 from polar_core.secrets import SecretBox
-from polar_core.sync import AngleHistory, LatencyEstimator, LatencyMonitor, StampedFrame, stamp
+from polar_core.sync import AngleHistory, LatencyEstimator, LatencyMonitor, StampedFrame, stamp, update_rate
 from polar_core.timestamp import StageReport, estimate_offset, read_strip, stat, unwrap
 from polar_core.video import VideoSource, capture_target, ffmpeg_options, opencv_opener, redact
 
@@ -434,7 +434,8 @@ class VideoService:
     def measure_latency(self, name: str, amplitude_deg: float = 25.0, speed_deg_s: float = 50.0,
                         save: bool = True) -> Future:
         """Повернути камеру туди й назад і знайти затримку відео відносно енкодерів.
-        Результат: (затримка, мс; якість 0..1). Зберігається в параметрах камери."""
+        Результат: (затримка, мс; якість 0..1; (кадрів/с у потоці, оновлень зображення/с) або None).
+        Затримка зберігається в параметрах камери."""
         out: Future = Future()
         pipe = self._pipes.get(name)
         if pipe is None:
@@ -475,12 +476,17 @@ class VideoService:
                     raise ValueError(f"ненадійний результат (кореляція {quality:.2f}) — "
                                      "спрямуйте камеру на ділянку з деталями і повторіть")
                 ms = int(round(lag_s * 1000))
+                moving = []
+                for _img, t in frames:
+                    a = pipe.history.at(t - lag_s)
+                    moving.append(bool(a and a.moving))
+                rates = update_rate(frames, moving)
                 if save and rec.id:
                     with self._db_lock:
                         with self.conn:
                             self.conn.execute("UPDATE cameras SET stream_latency_ms = ? WHERE id = ?", (ms, rec.id))
                     rec.video_latency_ms = ms
-                out.set_result((ms, quality))
+                out.set_result((ms, quality, rates))
             except Exception as e:  # noqa: BLE001
                 out.set_exception(e)
             finally:

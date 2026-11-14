@@ -90,3 +90,23 @@ def test_latency_monitor():
     for _ in range(50):
         m.record(300)
     assert m.exceeded and m.percentile() == pytest.approx(300)
+
+
+def test_update_rate_counts_repeated_sensor_frames():
+    """Потік 60 к/с, сенсор оновлюється 20 разів/с (кожен кадр повторено тричі) — 60 і ≈ 20."""
+    from polar_core.sync import update_rate
+    rng = np.random.default_rng(1)
+    scene = rng.integers(0, 255, (480, 2000), dtype=np.uint8).astype(np.float32)
+    frames, moving = [], []
+    for i in range(120):
+        sensor = i // 3                                          # нове зображення раз на 3 кадри
+        x = 10 * sensor
+        img = scene[:, x:x + 640] + rng.normal(0, 2, (480, 640))  # шум аналогового сигналу — у кожному кадрі
+        frames.append((img, i / 60.0))
+        moving.append(True)
+    stream, unique = update_rate(frames, moving)
+    assert stream == pytest.approx(60, rel=0.02) and unique == pytest.approx(20, rel=0.1)
+    all_new = [(scene[:, 5 * i:5 * i + 640], i / 30.0) for i in range(60)]
+    s2, u2 = update_rate(all_new, [True] * 60)
+    assert u2 == pytest.approx(s2, rel=0.05)                      # кожен кадр новий
+    assert update_rate(all_new[:5], [True] * 5) is None

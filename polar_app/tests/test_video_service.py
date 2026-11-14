@@ -63,7 +63,8 @@ def test_no_link_means_no_angles(env):
 def test_measure_latency_sim(env):
     ctl, vs, backend, conn = env
     assert wait(5, lambda: ctl.status("Камера 3").link_ok and vs.stats("Камера 3").frames > 5)
-    ms, quality = vs.measure_latency("Камера 3").result(timeout=30)
+    ms, quality, rates = vs.measure_latency("Камера 3").result(timeout=30)
+    assert rates is not None and rates[1] == pytest.approx(rates[0], rel=0.25)   # імітатор: кожен кадр новий
     # виміряна затримка = затримка потоку + час, поки кадр малюється й доходить до програми
     # (на повільних машинах CI це десятки мс), тож вона трохи більша за задану
     delay_ms = fakes.VIDEO_DELAY_S * 1000

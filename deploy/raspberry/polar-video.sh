@@ -69,14 +69,21 @@ case "${ENCODER,,}" in
 esac
 
 FILTERS=""
+OFPS=$FPS                                              # кадрів/с у потоці (FPS — з перетворювача)
 if [ "${VIDEO_DEINTERLACE:-1}" = "1" ]; then
-  FILTERS="yadif=mode=0:parity=auto:deint=0,"          # кадр з двох напівкадрів, 25/30 к/с
+  if [ "${VIDEO_FIELDS:-0}" = "1" ]; then
+    # кадр з кожного напівкадру (поля): 50 (PAL) / 60 (NTSC) к/с; пропущені рядки добудовуються
+    FILTERS="yadif=mode=1:parity=auto:deint=0,"
+    OFPS=$((FPS * 2))
+  else
+    FILTERS="yadif=mode=0:parity=auto:deint=0,"        # кадр з двох напівкадрів, 25/30 к/с
+  fi
 fi
 [ "$OUT" != "$SIZE" ] && FILTERS="${FILTERS}scale=${OW}:${OH}:flags=bilinear,"
 FILTERS="${FILTERS}format=yuv420p"
 
 hw_ok() {   # апаратний кодер Pi 4 (bcm2835-codec) доступний і працює
-  ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=${OUT}:rate=${FPS}" -frames:v 5 \
+  ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=${OUT}:rate=${OFPS}" -frames:v 5 \
     -vf format=yuv420p -c:v h264_v4l2m2m -b:v "$BITRATE" -f null - >/dev/null 2>&1
 }
 # Апаратний кодер вирівнює рядок кадру на 32 пікселі: ширина, що не ділиться на 32 (напр. 720),
@@ -100,7 +107,7 @@ case "$ENCODER" in
     ENC=(-c:v mjpeg -q:v "${VIDEO_MJPEG_QUALITY:-5}") ;;
   *)         # програмний H.264; sliced-threads — кадр ділиться між ядрами, без затримки на кадр
     ENC=(-c:v libx264 -preset ultrafast -tune zerolatency -x264-params sliced-threads=1 -b:v "$BITRATE"
-         -g "$FPS" -bf 0) ;;
+         -g "$OFPS" -bf 0) ;;
 esac
 
 # Мітка часу Pi в кадрі — лише на час вимірювання затримки з Polar («Затримка по етапах»): вузол сервоприводів
@@ -114,7 +121,7 @@ if [ "$(cat "$TS_FLAG" 2>/dev/null)" = "1" ]; then
   VF=(-filter_complex "[0:v]${FILTERS},setpts=RTCTIME/(1000000*TB),split[a][b];[b]crop=224:8:0:0,geq=lum='${GEQ_LUM}':cb=128:cr=128[s];[a][s]overlay=0:0,setpts=PTS-STARTPTS${LAST}[v]" -map "[v]")
   echo "мітка часу в кадрі: увімкнено (вимірювання затримки)"
 fi
-echo "відео: $DEV ($V4L_STD, вхід $INPUT, $SIZE@$FPS) → $OUT → $ENCODER → rtsp://…:8554/$PATH_NAME"
+echo "відео: $DEV ($V4L_STD, вхід $INPUT, $SIZE@$FPS) → $OUT@$OFPS → $ENCODER → rtsp://…:8554/$PATH_NAME"
 
 exec ffmpeg -hide_banner -loglevel warning \
   -f v4l2 -thread_queue_size 64 "${STD_ARGS[@]}" "${FMT_ARGS[@]}" -video_size "$SIZE" -framerate "$FPS" -i "$DEV" \

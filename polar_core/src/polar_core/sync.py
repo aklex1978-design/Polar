@@ -219,3 +219,41 @@ class LatencyMonitor:
     def exceeded(self) -> bool:
         p = self.percentile()
         return p is not None and p > self.limit_ms
+
+
+def _small(img: np.ndarray, size: Tuple[int, int] = (80, 60), skip_rows: int = 8) -> np.ndarray:
+    """Зменшений сірий кадр (середнє по блоках) без верхніх рядків — там може бути мітка часу Pi."""
+    g = img[skip_rows:]
+    if g.ndim == 3:
+        g = g.mean(axis=2)
+    h, w = g.shape
+    bh, bw = max(1, h // size[1]), max(1, w // size[0])
+    g = g[:bh * size[1], :bw * size[0]].astype(np.float32)
+    return g.reshape(size[1], bh, size[0], bw).mean(axis=(1, 3))
+
+
+def update_rate(frames: Sequence[Tuple[np.ndarray, float]], moving: Sequence[bool]
+                ) -> Optional[Tuple[float, float]]:
+    """(кадрів/с у потоці, скільки разів/с камера справді оновлює зображення) під час повороту камери.
+
+    Поки камера повертається, кожне нове зображення сенсора зсуває кадр; кадр-повтор (сенсор ще не
+    оновився, напр. 60 полів аналогового сигналу при сенсорі 30 Гц або 9 Гц) майже не відрізняється від
+    попереднього. Поріг — 35 % від 90-го процентиля різниць сусідніх кадрів, тож не залежить від
+    контрасту сцени. frames — (кадр, час), moving — чи рухалась камера для цього кадру."""
+    pairs = []
+    prev = None
+    for (img, t), mv in zip(frames, moving):
+        cur = (_small(img), t)
+        if prev is not None and mv:
+            pairs.append((float(np.abs(cur[0] - prev[0]).mean()), prev[1], t))
+        prev = cur
+    if len(pairs) < 10:
+        return None
+    diffs = sorted(d for d, _a, _b in pairs)
+    thr = 0.35 * diffs[int(0.9 * (len(diffs) - 1))]
+    span = sum(b - a for _d, a, b in pairs)
+    if span <= 0:
+        return None
+    stream = len(pairs) / span
+    unique = sum(1 for d, _a, _b in pairs if d >= thr) / span
+    return stream, unique
