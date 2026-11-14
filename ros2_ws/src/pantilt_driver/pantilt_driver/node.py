@@ -1,11 +1,13 @@
 """Вузол ROS 2 pantilt_driver: керує двома сервоприводами ST3020 однієї камери."""
 from __future__ import annotations
 
+import os
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import Empty
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 
 from polar_interfaces.msg import (PanTiltCommand, PanTiltJog, PanTiltState, ServoSettings,
                                   ServoTelemetry)
@@ -14,6 +16,18 @@ from polar_interfaces.srv import ConfigureServos, ScanServos, SetServoId, SetZer
 from .backend import SimBackend
 from .controller import PanTiltController
 from .servo import AxisStatus, ServoConfig
+
+
+def write_flag(path: str, on: bool):
+    """Записати 1/0 у файл-прапорець. (успіх, повідомлення) — для сервісу video_timestamp."""
+    if not os.path.isdir(os.path.dirname(path)):
+        return False, "на цьому Pi немає служби відео з міткою часу (оновіть: install.sh)"
+    try:
+        with open(path, "w", encoding="ascii") as f:
+            f.write("1" if on else "0")
+    except OSError as e:
+        return False, str(e)
+    return True, "мітку часу в кадрі " + ("увімкнено — відео перезапускається" if on else "вимкнено")
 
 
 def _servo_config(node: Node, prefix: str, defaults: dict) -> ServoConfig:
@@ -65,6 +79,14 @@ class PanTiltNode(Node):
 
         self.backend_name = backend_name
         self.port = self.declare_parameter("port", "/dev/serial0").value
+        # файл-прапорець мітки часу в кадрі; його зміну бачить служба polar-video-ts і перезапускає відео
+        self.ts_flag = self.declare_parameter("video_timestamp_flag", "/var/lib/polar/video/timestamp").value
+        try:                                  # лишилось увімкненим після обриву вимірювання — вимкнути
+            with open(self.ts_flag, encoding="ascii") as f:
+                if f.read().strip() == "1":
+                    write_flag(self.ts_flag, False)
+        except OSError:
+            pass
         self.baudrate = self.declare_parameter("baudrate", 1_000_000).value
         backend = self._open_backend(backend_name, [pan.servo_id, tilt.servo_id])
         self.ctrl = PanTiltController(backend, pan, tilt, link_timeout_s=link_timeout_s)
@@ -81,6 +103,7 @@ class PanTiltNode(Node):
         self.create_service(ScanServos, "scan", self._on_scan)
         self.create_service(SetZero, "set_zero", self._on_set_zero)
         self.create_service(SetServoId, "set_servo_id", self._on_set_servo_id)
+        self.create_service(SetBool, "video_timestamp", self._on_video_timestamp)
         self.state_pub = self.create_publisher(PanTiltState, "state", state_qos)
         self.rate_hz = rate_hz
         self.timer = self.create_timer(1.0 / rate_hz, self._tick)
@@ -128,6 +151,11 @@ class PanTiltNode(Node):
             resp.success, resp.message = True, ("середину ходу і нуль встановлено" if recenter else "нуль встановлено")
         except (ValueError, OSError, NotImplementedError) as e:
             resp.success, resp.message = False, str(e)
+        return resp
+
+    def _on_video_timestamp(self, req, resp):
+        """Увімкнути / вимкнути мітку часу Pi в кадрі (вимірювання затримки по етапах)."""
+        resp.success, resp.message = write_flag(self.ts_flag, bool(req.data))
         return resp
 
     def _on_set_servo_id(self, req, resp):

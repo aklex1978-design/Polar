@@ -12,7 +12,7 @@ from pantilt_driver.servo import ServoConfig
 from polar_core.control import (CameraControlConfig, CameraSnapshot, RosSettings, ServoSettings,
                                 ServoTelemetry)
 
-from .base import ControlBackend, failed
+from .base import ControlBackend, done, failed
 
 
 def to_servo_config(s: ServoSettings) -> ServoConfig:
@@ -36,8 +36,14 @@ class _SimCamera:
         self.lock = threading.Lock()
 
 
+SIM_FRAME_NET_S = 0.06        # імітований шлях кадру «Pi → сервер» для вимірювання затримки по етапах
+SIM_STATE_NET_S = 0.005        # те саме для стану (кутів)
+
+
 class SimControlBackend(ControlBackend):
     def __init__(self, clock: Callable[[], float] = time.monotonic, autostart_thread: bool = True) -> None:
+        self.pi_clock_offset_s = 0.0          # годинник «Pi» імітатора − годинник сервера
+        self.timestamps: Dict[str, bool] = {}  # мітка часу в кадрах увімкнена
         self._clock = clock
         self._cams: Dict[str, _SimCamera] = {}
         self._rate_hz = 20.0
@@ -74,7 +80,8 @@ class SimControlBackend(ControlBackend):
                     received_at=self._clock(), azimuth_deg=st.azimuth_deg, elevation_deg=st.elevation_deg,
                     moving=st.moving, error_flags=st.error_flags,
                     pan=self._telemetry(cam.ctrl.pan.servo_id, st.pan),
-                    tilt=self._telemetry(cam.ctrl.tilt.servo_id, st.tilt))
+                    tilt=self._telemetry(cam.ctrl.tilt.servo_id, st.tilt),
+                    pi_stamp=time.time() + self.pi_clock_offset_s - SIM_STATE_NET_S, received_wall=time.time())
             self._emit(name, snap)
 
     @staticmethod
@@ -98,6 +105,23 @@ class SimControlBackend(ControlBackend):
 
     def camera(self, name: str) -> _SimCamera:
         return self._cams[name]
+
+    # --- вимірювання затримки по етапах -------------------------------------
+    def video_timestamp(self, name, on) -> Future:
+        if name not in self._cams:
+            return failed(KeyError(name))
+        self.timestamps[name] = bool(on)
+        return done((True, "мітку часу в кадрі " + ("увімкнено" if on else "вимкнено")))
+
+    def pi_time(self, name) -> Future:
+        return done(time.time() + self.pi_clock_offset_s)
+
+    def stamp_frame(self, name: str, img):
+        """Кадр «з Pi» імітатора: мітка часу Pi, як малює ffmpeg на справжньому Pi."""
+        if self.timestamps.get(name) and img is not None:
+            from polar_core.timestamp import draw_strip
+            draw_strip(img, (time.time() + self.pi_clock_offset_s - SIM_FRAME_NET_S) * 1000.0)
+        return img
 
     # --- команди ----------------------------------------------------------
     def _call(self, name: str, fn) -> Future:

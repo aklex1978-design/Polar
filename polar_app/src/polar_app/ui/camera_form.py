@@ -131,6 +131,11 @@ class CameraForm(QWidget):
         self.message = QLabel("")
         self.message.setWordWrap(True)
         left.addWidget(self.message)
+        self.stages_info = QLabel("")
+        self.stages_info.setWordWrap(True)
+        self.stages_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.stages_info.setVisible(False)
+        left.addWidget(self.stages_info)
         outer.addLayout(left, 3)
         outer.addWidget(self._build_video_panel(), 2)
 
@@ -235,6 +240,10 @@ class CameraForm(QWidget):
         self.latency_btn = QPushButton("Виміряти затримку")
         self.latency_btn.setToolTip("Камера повернеться на ±25° і назад; затримка відео запишеться в параметри")
         self.latency_btn.clicked.connect(self.measure_latency)
+        self.stages_btn = QPushButton("Затримка по етапах")
+        self.stages_btn.setToolTip("Годинник Pi ↔ Polar, кадр на Pi → у Polar → на екрані, кути Pi → Polar. "
+                                   "На ~10 с Pi вписує мітку часу в кадр (відео перезапуститься)")
+        self.stages_btn.clicked.connect(self.measure_stages)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.setDefault(True)
         self.save_btn.clicked.connect(self.save)
@@ -242,6 +251,7 @@ class CameraForm(QWidget):
         self.cancel_btn.clicked.connect(self.closed.emit)
         h.addWidget(self.check_btn)
         h.addWidget(self.latency_btn)
+        h.addWidget(self.stages_btn)
         h.addStretch(1)
         h.addWidget(self.cancel_btn)
         h.addWidget(self.save_btn)
@@ -314,6 +324,8 @@ class CameraForm(QWidget):
         self._loading = False
         self._show_optics()
         self.latency_btn.setEnabled(camera_id is not None)
+        self.stages_btn.setEnabled(camera_id is not None)
+        self.stages_info.setVisible(False)
         self._protocol_hint()
         self.validate()
 
@@ -545,6 +557,30 @@ class CameraForm(QWidget):
             self._say(f"Затримка відео відносно датчика: {ms} мс (збіг {q:.2f}); збережено.", GOOD)
         self.bridge.watch(fut, report)
 
+    def measure_stages(self) -> None:
+        if self.rec.id is None:
+            return
+        self._say("Вимірюю затримку по етапах: синхронізую годинник, Pi вписує мітку часу в кадри (~10 с)…")
+        self.stages_btn.setEnabled(False)
+        try:
+            fut = self.ctx.video.measure_stages(self.rec.name)
+        except Exception as e:  # noqa: BLE001
+            self._say(str(e), BAD)
+            self.stages_btn.setEnabled(True)
+            return
+
+        def report(f):
+            self.stages_btn.setEnabled(True)
+            try:
+                r = f.result()
+            except Exception as e:  # noqa: BLE001
+                self._say(f"Затримку по етапах не виміряно: {e}", BAD)
+                return
+            self.stages_info.setText("<b>Затримка по етапах</b><br>" + "<br>".join(r.lines()))
+            self.stages_info.setVisible(True)
+            self._say("Затримку по етапах виміряно.", GOOD)
+        self.bridge.watch(fut, report)
+
     # --- живе відео ------------------------------------------------------------------------
     def _refresh_video(self) -> None:
         if not self.isVisible():
@@ -556,6 +592,8 @@ class CameraForm(QWidget):
             self.preview.setPixmap(pix.scaled(self.preview.width(), self.preview.height(),
                                               Qt.AspectRatioMode.KeepAspectRatio,
                                               Qt.TransformationMode.SmoothTransformation))
+            if sf is not None:
+                self.ctx.video.note_displayed(name, sf)
         if sf is not None:
             if sf.has_angles:
                 a = sf.angles

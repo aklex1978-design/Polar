@@ -97,9 +97,14 @@ systemctl restart chrony || true
 
 say "8/8 Служби автозапуску"
 install -m 0644 "$HERE/polar-pantilt.service" "$HERE/polar-video.service" "$HERE/polar-firstboot.service" \
-  "$HERE/polar-rosbridge.service" /etc/systemd/system/
+  "$HERE/polar-rosbridge.service" "$HERE/polar-video-ts.path" "$HERE/polar-video-ts.service" /etc/systemd/system/
+# прапорець мітки часу в кадрі: пише вузол сервоприводів (користувач polar), стежить polar-video-ts.path
+install -d -o polar -g polar /var/lib/polar/video
+[ -f /var/lib/polar/video/timestamp ] || install -m 0644 -o polar -g polar /dev/null /var/lib/polar/video/timestamp
+echo 0 > /var/lib/polar/video/timestamp
 systemctl daemon-reload
 systemctl enable polar-firstboot.service polar-pantilt.service polar-rosbridge.service
+systemctl enable --now polar-video-ts.path
 if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
   systemctl enable polar-video.service
 else

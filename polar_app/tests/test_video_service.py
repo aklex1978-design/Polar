@@ -164,3 +164,38 @@ def test_acquire_release_opens_stream_on_demand(tmp_path):
     finally:
         vs.shutdown()
         ctl.shutdown()
+
+
+def test_measure_stages_sim(env):
+    """Затримка по етапах в імітаторі: годинник «Pi» на +500 мс, кадр «Pi → сервер» 60 мс, кути 5 мс."""
+    import threading
+    ctl, vs, backend, conn = env
+    backend.pi_clock_offset_s = 0.5
+    assert wait(5, lambda: vs.latest("Камера 1") is not None)
+    stop = threading.Event()
+
+    def screen():                                       # «екран» показує кожен новий кадр через ~20 мс
+        while not stop.is_set():
+            sf = vs.latest("Камера 1")
+            time.sleep(0.02)
+            vs.note_displayed("Камера 1", sf)
+    threading.Thread(target=screen, daemon=True).start()
+    try:
+        r = vs.measure_stages("Камера 1", duration_s=1.5).result(timeout=20)
+    finally:
+        stop.set()
+    assert r.clock_offset_ms == pytest.approx(500, abs=15) and r.clock_error_ms < 10
+    assert r.pi_to_polar is not None and 55 <= r.pi_to_polar.median <= 120, r.pi_to_polar
+    assert r.polar_to_screen is not None and 15 <= r.polar_to_screen.median <= 120, r.polar_to_screen
+    assert r.angles is not None and r.angles.median == pytest.approx(5, abs=5)
+    assert not backend.timestamps["Камера 1"]                        # після вимірювання мітку вимкнено
+    from polar_core.timestamp import read_strip
+    time.sleep(0.2)
+    assert read_strip(vs.latest("Камера 1").image) is None             # кадри знову без смужки
+    assert "Разом кадр Pi → екран" in "\n".join(r.lines())
+
+
+def test_measure_stages_needs_running_stream(env):
+    ctl, vs, backend, conn = env
+    with pytest.raises(KeyError):
+        vs.measure_stages("Немає такої").result(timeout=2)

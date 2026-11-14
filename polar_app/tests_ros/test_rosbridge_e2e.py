@@ -79,6 +79,16 @@ def test_go_to_jog_and_stop(svc):
     assert wait(3, lambda: svc.status("Камера 7").error_flags & ctl.ERROR_STOPPED)
 
 
+def test_pi_time_and_timestamp_service(svc):
+    """Час Pi через rosapi (поруч із rosbridge) і сервіс мітки часу вузла (без служби відео — відмова)."""
+    import time as _t
+    t0 = _t.time()
+    pi_t = svc.backend.pi_time("Камера 7").result(timeout=10)
+    assert abs(pi_t - (t0 + _t.time()) / 2) < 0.5                     # той самий компʼютер — той самий час
+    ok, msg = svc.backend.video_timestamp("Камера 7", True).result(timeout=10)
+    assert not ok and "install.sh" in msg
+
+
 def test_services(svc):
     assert svc.scan("Камера 7", 1, 5).result(timeout=25) == [1, 2]
     zero = svc.set_zero("Камера 7", "tilt").result(timeout=5)

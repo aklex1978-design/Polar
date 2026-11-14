@@ -357,7 +357,10 @@ def telemetry_from_dict(t: dict) -> ServoTelemetry:
 
 
 def snapshot_from_dict(m: dict) -> CameraSnapshot:
-    return CameraSnapshot(received_at=time.monotonic(), azimuth_deg=float(m.get("azimuth_deg", 0.0)),
+    stamp = (m.get("header") or {}).get("stamp") or {}
+    pi_stamp = (float(stamp.get("sec", 0)) + float(stamp.get("nanosec", 0)) * 1e-9) if stamp.get("sec") else None
+    return CameraSnapshot(received_at=time.monotonic(), pi_stamp=pi_stamp, received_wall=time.time(),
+                          azimuth_deg=float(m.get("azimuth_deg", 0.0)),
                           elevation_deg=float(m.get("elevation_deg", 0.0)), moving=bool(m.get("moving", False)),
                           error_flags=int(m.get("error_flags", 0)),
                           pan=telemetry_from_dict(m.get("pan") or {}), tilt=telemetry_from_dict(m.get("tilt") or {}))
@@ -534,6 +537,27 @@ class RosbridgeControlBackend(ControlBackend):
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", S_SET_ID, {"old_id": int(old_id), "new_id": int(new_id)},
                           lambda v: (bool(v.get("success")), str(v.get("message", ""))))
+
+    def video_timestamp(self, name, on) -> Future:
+        return self._call(name, "video_timestamp", "std_srvs/srv/SetBool", {"data": bool(on)},
+                          lambda v: (bool(v.get("success")), str(v.get("message", ""))))
+
+    def pi_time(self, name) -> Future:
+        """Час Pi через сервіс rosapi (працює разом з rosbridge_server): ROS-час = системний годинник."""
+        try:
+            link = self._link(name)
+        except KeyError as e:
+            return failed(KeyError(e.args[0]))
+
+        def convert(v):
+            t = v.get("time") or {}
+            return float(t.get("sec", 0)) + float(t.get("nanosec", 0)) * 1e-9
+        out = link.conn.call("/rosapi/get_time", "rosapi_msgs/srv/GetTime", {}, convert)
+        timer = threading.Timer(self.service_timeout_s, lambda: out.done() or (
+            link.conn.forget(out), out.set_exception(TimeoutError(f"{name}: Pi не відповів на запит часу"))))
+        timer.daemon = True
+        timer.start()
+        return out
 
     def snapshot(self, name) -> Optional[CameraSnapshot]:
         with self._lock:

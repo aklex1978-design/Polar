@@ -909,3 +909,23 @@ def test_free_limits_checkbox_released_on_leave(win):
     c.free_limits.setChecked(True)
     win.show_cameras()
     assert not win.ctx.control.limits_free("Камера 2")
+
+
+def test_stage_latency_report(win):
+    """«Затримка по етапах»: звіт під кнопками — годинник, Pi → Polar, Polar → екран, кути."""
+    rec = win.ctx.records()[0]
+    win.ctx.control.backend.sim.pi_clock_offset_s = 0.3
+    win.edit_camera(rec.id)
+    f = win.form
+    assert wait(6, lambda: win.ctx.video.latest(rec.name) is not None)
+    assert not f.stages_info.isVisible()
+    f.stages_btn.click()
+    assert not f.stages_btn.isEnabled()
+    assert wait(30, lambda: f.stages_info.isVisible()), f.message.text()
+    text = f.stages_info.text()
+    import re
+    offset = int(re.search(r"Годинник Pi − Polar: \+(\d+) мс", text).group(1))
+    assert abs(offset - 300) <= 15, text
+    screen = text.split("Кадр: Polar → екран:")[1].split("<br>")[0]
+    assert "Кадр: Pi → Polar:" in text and "мс" in screen and "немає" not in screen, text
+    assert "Кути: Pi → Polar:" in text and f.stages_btn.isEnabled()

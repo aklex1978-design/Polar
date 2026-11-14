@@ -15,6 +15,7 @@ from polar_core.angles import wrap180
 from polar_core.cameras import CameraRecord
 from polar_core.secrets import SecretBox
 from polar_core.sync import AngleHistory, LatencyEstimator, LatencyMonitor, StampedFrame, stamp
+from polar_core.timestamp import StageReport, estimate_offset, read_strip, stat, unwrap
 from polar_core.video import VideoSource, capture_target, ffmpeg_options, opencv_opener, redact
 
 OpenFactory = Callable[[CameraRecord, str], Callable[[], object]]
@@ -87,6 +88,29 @@ class _Pipeline:
                 fn(sf)
 
 
+class _StampingCapture:
+    """Обгортка захоплення: кожен кадр проходить через fn (мітка часу «Pi» в імітаторі)."""
+
+    def __init__(self, cap, fn) -> None:
+        self._cap, self._fn = cap, fn
+
+    def read(self):
+        ok, img = self._cap.read()
+        return ok, (self._fn(img) if ok else img)
+
+    def __getattr__(self, item):
+        return getattr(self._cap, item)
+
+
+def _stamping(opener, fn):
+    def open_capture():
+        cap = opener()
+        if hasattr(opener, "label"):
+            open_capture.label = opener.label            # адреса потоку для журналу (без пароля)
+        return _StampingCapture(cap, fn) if cap is not None else cap
+    return open_capture
+
+
 class VideoService:
     def __init__(self, control, box: SecretBox, open_factory: OpenFactory = real_opener,
                  usb_lister: Optional[Callable[[], list]] = None,
@@ -104,6 +128,9 @@ class VideoService:
         self._pipes: Dict[str, _Pipeline] = {}
         self._users: Dict[str, int] = {}
         self._lock = threading.Lock()
+        self._display_log: Dict[str, list] = {}    # вимірювання по етапах: кадр отримано → показано, мс
+        self._shown: Dict[str, int] = {}
+        self._state_log: Dict[str, Tuple[float, list]] = {}   # (зсув годинників, затримки кутів, мс)
         control.backend.add_state_listener(self._on_state)
 
     # --- кути з топіка state ----------------------------------------------------
@@ -116,6 +143,10 @@ class VideoService:
 
     def _on_state(self, name: str, snap) -> None:
         self.history(name).add(snap.received_at, snap.azimuth_deg, snap.elevation_deg, snap.moving)
+        log = self._state_log.get(name)
+        if log is not None and getattr(snap, "pi_stamp", None) and getattr(snap, "received_wall", None):
+            offset, values = log
+            values.append((snap.received_wall - (snap.pi_stamp - offset)) * 1000.0)
 
     # --- потоки -------------------------------------------------------------------
     def records(self):
@@ -216,9 +247,13 @@ class VideoService:
         if rec.demo_video:
             from .video_demo import demo_opener
 
-            return VideoSource(demo_opener(rec, self.history(rec.name) if rec.id else None), rec.name,
-                               on_event=on_event)
-        return VideoSource(self._open_factory(rec, password), rec.name, on_event=on_event)
+            opener = demo_opener(rec, self.history(rec.name) if rec.id else None)
+        else:
+            opener = self._open_factory(rec, password)
+        sim = getattr(self.control.backend, "sim", self.control.backend)       # Mixed або сам імітатор
+        if rec.demo_servos and sim is not None and hasattr(sim, "stamp_frame"):
+            opener = _stamping(opener, lambda img, n=rec.name: sim.stamp_frame(n, img))   # «Pi» імітатора
+        return VideoSource(opener, rec.name, on_event=on_event)
 
     def _running_usb(self, rec: CameraRecord) -> Optional[_Pipeline]:
         if rec.protocol != "USB":
@@ -227,6 +262,80 @@ class VideoService:
             if p.rec.protocol == "USB" and p.rec.address.strip() == rec.address.strip() and p.source.connected:
                 return p
         return None
+
+    # --- затримка по етапах ------------------------------------------------------------
+    def note_displayed(self, name: str, sf: StampedFrame) -> None:
+        """Екран показав кадр — для вимірювання «Polar → екран» (лише під час вимірювання, лише нові кадри)."""
+        log = self._display_log.get(name)
+        if log is None or sf is None or self._shown.get(name) == sf.index:
+            return
+        self._shown[name] = sf.index
+        log.append((self._clock() - sf.t) * 1000.0)
+
+    def measure_stages(self, name: str, duration_s: float = 4.0, settle_s: float = 25.0,
+                       clock_samples: int = 8) -> Future:
+        """Затримка по етапах: годинник Pi ↔ Polar, кадр на Pi → у Polar → на екрані, кути Pi → Polar.
+        На час вимірювання Pi вписує мітку часу в кадри (служба відео на Pi перезапускається)."""
+        out: Future = Future()
+        pipe = self._pipes.get(name)
+        if pipe is None:
+            out.set_exception(KeyError(f"{name}: потік камери не запущено"))
+            return out
+        backend = self.control.backend
+
+        def run():
+            frames, display, states, seen = [], [], [], [0]
+            enabled = False
+            wall_minus_mono = time.time() - time.monotonic()
+
+            def on_frame(sf):
+                seen[0] += 1
+                v = read_strip(sf.image)
+                if v is None:
+                    return
+                arrived = sf.t + wall_minus_mono                  # час сервера, коли кадр отримано
+                pi_ms = unwrap(v, (arrived + offset) * 1000.0)
+                frames.append(arrived * 1000.0 - (pi_ms - offset * 1000.0))
+            try:
+                samples = []
+                for _ in range(clock_samples):
+                    t0 = time.time()
+                    pi = backend.pi_time(name).result(timeout=3)
+                    samples.append((t0, pi, time.time()))
+                offset, rtt = estimate_offset(samples)
+                ok, msg = backend.video_timestamp(name, True).result(timeout=6)
+                if not ok:
+                    raise RuntimeError(msg)
+                enabled = True
+                pipe.subscribers.append(on_frame)
+                start = time.monotonic()
+                while not frames and time.monotonic() - start < settle_s:
+                    time.sleep(0.1)
+                if not frames:
+                    raise RuntimeError(f"мітки часу в кадрах не зʼявились за {settle_s:.0f} с — оновіть Pi "
+                                       "(install.sh) або перевірте службу polar-video-ts")
+                time.sleep(0.5)                                   # перші кадри після перезапуску — пропустити
+                frames.clear()
+                seen[0] = 0
+                self._display_log[name] = display
+                self._state_log[name] = (offset, states)
+                time.sleep(duration_s)
+                out.set_result(StageReport(offset * 1000.0, rtt * 500.0, stat(frames), stat(display),
+                                           stat(states), seen[0]))
+            except Exception as e:  # noqa: BLE001
+                out.set_exception(e)
+            finally:
+                self._display_log.pop(name, None)
+                self._state_log.pop(name, None)
+                if on_frame in pipe.subscribers:
+                    pipe.subscribers.remove(on_frame)
+                if enabled:
+                    try:
+                        backend.video_timestamp(name, False).result(timeout=6)
+                    except Exception:  # noqa: BLE001 — Pi сам вимкне мітку після перезапуску вузла
+                        pass
+        threading.Thread(target=run, name=f"stages-{name}", daemon=True).start()
+        return out
 
     # --- стан ----------------------------------------------------------------------
     def latest(self, name: str) -> Optional[StampedFrame]:

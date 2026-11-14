@@ -87,6 +87,12 @@ class MixedControlBackend(ControlBackend):
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", name, old_id, new_id)
 
+    def video_timestamp(self, name, on) -> Future:
+        return self._call(name, "video_timestamp", name, on)
+
+    def pi_time(self, name) -> Future:
+        return self._call(name, "pi_time", name)
+
     def snapshot(self, name) -> Optional[CameraSnapshot]:
         b = self._backend(name)
         return b.snapshot(name) if b is not None else None

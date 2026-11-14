@@ -1,0 +1,9 @@
+[Unit]
+Description=Polar: мітка часу в кадрі змінилась — перезапустити відео (вимірювання затримки з Polar)
+
+[Path]
+PathChanged=/var/lib/polar/video/timestamp
+Unit=polar-video-ts.service
+
+[Install]
+WantedBy=multi-user.target

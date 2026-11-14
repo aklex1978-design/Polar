@@ -72,9 +72,20 @@ if [ "$ENCODER" = "h264_v4l2m2m" ]; then
 else
   ENC=(-c:v libx264 -preset ultrafast -tune zerolatency -b:v "$BITRATE" -g "$FPS" -bf 0)
 fi
+# Мітка часу Pi в кадрі — лише на час вимірювання затримки з Polar («Затримка по етапах»): вузол сервоприводів
+# пише 1 у файл-прапорець, служба polar-video-ts перезапускає відео. Смужка 224×8 у лівому верхньому куті:
+# маркер, 24 біти часу Pi в мс (за модулем 2^24), маркер — див. polar_core/timestamp.py (GEQ_LUM — той самий).
+TS_FLAG=${VIDEO_TIMESTAMP_FLAG:-/var/lib/polar/video/timestamp}
+GEQ_LUM='if(lt(X,8),235,if(lt(X,16),16,if(gte(X,216),235,if(gte(X,208),16,if(mod(floor(mod(floor(T*1000),16777216)/pow(2,25-floor(X/8))),2),235,16)))))'
+VF=(-vf "$FILTERS")
+if [ "$(cat "$TS_FLAG" 2>/dev/null)" = "1" ]; then
+  # setpts=RTCTIME — час кадру = настінний годинник Pi у мить обробки (≈ захоплення); потім знову від нуля
+  VF=(-filter_complex "[0:v]${FILTERS},setpts=RTCTIME/(1000000*TB),split[a][b];[b]crop=224:8:0:0,geq=lum='${GEQ_LUM}':cb=128:cr=128[s];[a][s]overlay=0:0,setpts=PTS-STARTPTS[v]" -map "[v]")
+  echo "мітка часу в кадрі: увімкнено (вимірювання затримки)"
+fi
 echo "відео: $DEV ($V4L_STD, вхід $INPUT, $SIZE@$FPS) → $ENCODER → rtsp://…:8554/$PATH_NAME"
 
 exec ffmpeg -hide_banner -loglevel warning \
   -f v4l2 -thread_queue_size 64 "${STD_ARGS[@]}" "${FMT_ARGS[@]}" -video_size "$SIZE" -framerate "$FPS" -i "$DEV" \
-  -vf "$FILTERS" "${ENC[@]}" -an \
+  "${VF[@]}" "${ENC[@]}" -an \
   -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/$PATH_NAME"

@@ -165,7 +165,15 @@ class Handler(socketserver.BaseRequestHandler):
                     pi.heartbeats += 1
                 elif op == "call_service" and pi.reply_services:
                     srv = m["service"].rsplit("/", 1)[1]
-                    if srv == "scan":
+                    if m["service"] == "/rosapi/get_time":
+                        assert m["type"] == "rosapi_msgs/srv/GetTime"
+                        now = time.time() + 0.25                                  # годинник «Pi» +250 мс
+                        values = {"time": {"sec": int(now), "nanosec": int((now % 1) * 1e9)}}
+                    elif srv == "video_timestamp":
+                        assert m["type"] == "std_srvs/srv/SetBool"
+                        pi.video_ts = m["args"]["data"]
+                        values = {"success": True, "message": "ok"}
+                    elif srv == "scan":
                         ids = bytes([1, 2])
                         values = {"ids": base64.b64encode(ids).decode() if pi.ids_as_base64 else [1, 2]}
                     elif srv == "set_zero":
@@ -264,6 +272,16 @@ def test_services(pi, backend):
     assert backend.set_servo_id("Камера 1", 1, 2).result(3) == (False, "ID 2 вже зайнятий")
 
 
+def test_pi_time_and_video_timestamp(pi, backend):
+    assert wait(5, lambda: backend.snapshot("Камера 1") is not None)
+    t0 = time.time()
+    pi_t = backend.pi_time("Камера 1").result(3)
+    assert pi_t - t0 == pytest.approx(0.25, abs=0.1)
+    assert backend.video_timestamp("Камера 1", True).result(3) == (True, "ok") and pi.video_ts is True
+    call = [m for m in pi.ops if m.get("op") == "call_service" and m["service"].endswith("video_timestamp")][0]
+    assert call["service"] == "/polar/camera_1/video_timestamp" and call["args"] == {"data": True}
+
+
 def test_service_timeout(pi, backend):
     assert wait(5, lambda: backend.snapshot("Камера 1") is not None)
     pi.reply_services = False
@@ -352,6 +370,9 @@ def test_resubscribes_when_state_never_arrives(pi, monkeypatch):
 def test_snapshot_from_partial_message():
     s = rb.snapshot_from_dict({"azimuth_deg": 1.5, "pan": {"id": 1, "online": True}})
     assert s.azimuth_deg == 1.5 and s.pan.online and not s.tilt.online and s.error_flags == 0
+    assert s.pi_stamp is None and s.received_wall is not None
+    s = rb.snapshot_from_dict({"header": {"stamp": {"sec": 1794650000, "nanosec": 500000000}}})
+    assert s.pi_stamp == pytest.approx(1794650000.5)
 
 
 # --- налаштування: адреса Pi, вибір каналу ----------------------------------------------------------------

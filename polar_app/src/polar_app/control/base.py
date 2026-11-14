@@ -52,6 +52,15 @@ class ControlBackend(abc.ABC):
     def shutdown(self) -> None:  # noqa: B027
         pass
 
+    # --- вимірювання затримки по етапах (необовʼязкові можливості каналу) ------------------------
+    def video_timestamp(self, name: str, on: bool) -> "Future[Tuple[bool, str]]":
+        """Увімкнути / вимкнути мітку часу Pi в кадрах камери."""
+        return failed(NotImplementedError("мітка часу в кадрі — лише через rosbridge або в демо"))
+
+    def pi_time(self, name: str) -> "Future[float]":
+        """Час на годиннику Pi камери, секунди від 1970 р."""
+        return failed(NotImplementedError("час Pi — лише через rosbridge або в демо"))
+
 
 def done(value) -> Future:
     f: Future = Future()

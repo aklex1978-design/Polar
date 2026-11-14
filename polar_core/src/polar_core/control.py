@@ -326,6 +326,8 @@ class CameraSnapshot:
     error_flags: int
     pan: ServoTelemetry = field(default_factory=ServoTelemetry)
     tilt: ServoTelemetry = field(default_factory=ServoTelemetry)
+    pi_stamp: Optional[float] = None       # час Pi, коли стан сформовано (с від 1970), якщо відомий
+    received_wall: Optional[float] = None  # час сервера (time.time()), коли стан отримано
 
 
 @dataclass

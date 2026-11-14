@@ -475,6 +475,8 @@ class ControlScreen(QWidget):
             self.view.pixmap = frame_pixmap(sf.image)
             self.view.frame_size = (sf.image.shape[1], sf.image.shape[0])
             self.view.update()
+            if hasattr(video, "note_displayed"):
+                video.note_displayed(self._streaming, sf)
         if st is not None and not st.connected:
             self.video_info.setText(f"Потік: немає ({st.last_error or 'підключення…'})")
             self.video_info.setStyleSheet(f"color: {BAD}")

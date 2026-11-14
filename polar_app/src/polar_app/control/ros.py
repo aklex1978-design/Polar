@@ -206,6 +206,14 @@ class RosControlBackend(ControlBackend):
         return self._call(name, "set_servo_id", SetServoId.Request(old_id=old_id, new_id=new_id),
                           lambda r: (r.success, r.message))
 
+    def video_timestamp(self, name, on) -> Future:
+        from std_srvs.srv import SetBool
+        link = self._link(name)
+        if not hasattr(link, "video_ts"):
+            link.video_ts = self._node.create_client(SetBool, f"{link.ns}/video_timestamp")
+            link._clients.append(link.video_ts)
+        return self._call(name, "video_ts", SetBool.Request(data=bool(on)), lambda r: (r.success, r.message))
+
     def snapshot(self, name) -> Optional[CameraSnapshot]:
         with self._lock:
             link = self._links.get(name)
