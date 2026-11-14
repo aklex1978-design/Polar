@@ -29,19 +29,24 @@ apply() {   # apply <файл на boot> <куди> — копіює, якщо �
 }
 apply polar.env /etc/polar/polar.env
 apply pantilt.yaml /etc/polar/pantilt.yaml
-[ "$changed" = 1 ] || { echo "налаштування на boot-розділі не змінились"; exit 0; }
 
-# shellcheck disable=SC1091
-. /etc/polar/polar.env
-
-# імʼя компʼютера за камерою: camera_2 → polar-camera-2 (так Pi легко знайти в мережі)
-name="polar-$(echo "${CAMERA_NS:-camera}" | tr '_' '-' | tr -cd 'a-zA-Z0-9-' | tr 'A-Z' 'a-z')"
-if [ "$(hostname)" != "$name" ]; then
-  hostnamectl set-hostname "$name"
-  sed -i -E "s/^127\.0\.1\.1\s.*/127.0.1.1 $name/" /etc/hosts
-  grep -q "^127.0.1.1" /etc/hosts || echo "127.0.1.1 $name" >> /etc/hosts
-  echo "імʼя компʼютера: $name"
+# імʼя компʼютера за камерою: camera_2 → polar-camera-2 (так Pi легко знайти в мережі) — під час КОЖНОГО
+# завантаження: cloud-init Ubuntu інакше повертає імʼя, задане в Raspberry Pi Imager
+if [ -f /etc/polar/polar.env ]; then
+  # shellcheck disable=SC1091
+  . /etc/polar/polar.env
+  if [ -d /etc/cloud/cloud.cfg.d ] && [ ! -f /etc/cloud/cloud.cfg.d/99-polar.cfg ]; then
+    printf 'preserve_hostname: true\nmanage_etc_hosts: false\n' > /etc/cloud/cloud.cfg.d/99-polar.cfg
+  fi
+  name="polar-$(echo "${CAMERA_NS:-camera}" | tr '_' '-' | tr -cd 'a-zA-Z0-9-' | tr 'A-Z' 'a-z')"
+  if [ "$(hostname)" != "$name" ]; then
+    hostnamectl set-hostname "$name"
+    sed -i -E "s/^127\.0\.1\.1\s.*/127.0.1.1 $name/" /etc/hosts
+    grep -q "^127.0.1.1" /etc/hosts || echo "127.0.1.1 $name" >> /etc/hosts
+    echo "імʼя компʼютера: $name"
+  fi
 fi
+[ "$changed" = 1 ] || { echo "налаштування на boot-розділі не змінились"; exit 0; }
 
 if [ -n "${NTP_SERVER:-}" ]; then
   mkdir -p /etc/chrony/conf.d
