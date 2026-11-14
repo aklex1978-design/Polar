@@ -140,7 +140,10 @@ class ST3020Bus(ServoBackend):
 
         position = decode_signed15(u16(at(REG_PRESENT_POSITION), at(REG_PRESENT_POSITION + 1)))
         speed = decode_signed15(u16(at(REG_PRESENT_SPEED), at(REG_PRESENT_SPEED + 1)))
-        load = decode_signed15(u16(at(REG_PRESENT_LOAD), at(REG_PRESENT_LOAD + 1)) & 0x87FF)
+        # навантаження: біти 0–9 — модуль 0…1000 (0,1 %), біт 10 — напрямок (перевірено на ST3020:
+        # 1064 = −4,0 %, а не 106,4 %)
+        raw_load = u16(at(REG_PRESENT_LOAD), at(REG_PRESENT_LOAD + 1))
+        load = -(raw_load & 0x3FF) if raw_load & 0x400 else raw_load & 0x3FF
         current = u16(at(REG_PRESENT_CURRENT), at(REG_PRESENT_CURRENT + 1)) & 0x7FFF
         return ServoReading(
             raw_deg=position * DEG_PER_STEP,
