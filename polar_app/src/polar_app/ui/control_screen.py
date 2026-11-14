@@ -507,9 +507,9 @@ class ControlScreen(QWidget):
             w.setEnabled(st.link_ok)
 
     # --- дії --------------------------------------------------------------------------
-    def _say(self, text: str, error: bool = False) -> None:
+    def _say(self, text: str, error: bool = False, warn: bool = False) -> None:
         self.message.setText(text)
-        self.message.setStyleSheet(f"color: {BAD}" if error else "")
+        self.message.setStyleSheet(f"color: {BAD}" if error else (f"color: {WARN}; font-weight: 600" if warn else ""))
 
     def _watch(self, future: Future, fn: Callable[[Future], None]) -> None:
         future.add_done_callback(lambda f: self._bridge.done.emit(fn, f))
@@ -517,14 +517,15 @@ class ControlScreen(QWidget):
     def _on_go(self) -> None:
         if not self._current:
             return
+        note = self.service.limit_note(self._current, self.tgt_az.value(), self.tgt_el.value())
         try:
             az, el = self.service.go_to(self._current, self.tgt_az.value(), self.tgt_el.value(),
                                         self.speed.value())
         except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
             return
-        if abs(el - self.tgt_el.value()) > 1e-6 or abs((az - self.tgt_az.value() + 180) % 360 - 180) > 1e-6:
-            self._say(f"Ціль обмежено межами камери: азимут {az:.1f}°, кут місця {el:.1f}°")
+        if note:
+            self._say(f"{note}. Ціль обмежено: азимут {az:.1f}°, кут місця {el:.1f}°", warn=True)
         else:
             self._say(f"Перехід до азимуту {az:.1f}°, кута місця {el:.1f}°")
 
@@ -533,9 +534,14 @@ class ControlScreen(QWidget):
             return
         step = self.step.value()
         try:
-            self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
+            note = self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
         except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
+            return
+        if note:
+            self._say(note, warn=True)
+        elif self.message.text().startswith("Досягнуто межі"):
+            self._say("")
 
     def _on_stop(self) -> None:
         if self._current:

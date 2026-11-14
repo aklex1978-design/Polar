@@ -118,9 +118,24 @@ class ControlService:
         self.backend.command(name, az_cam, el, self._speed(name, speed_deg_s))
         return ctl.camera_to_north(cfg, az_cam), el
 
-    def jog(self, name: str, d_azimuth_deg: float, d_elevation_deg: float, speed_deg_s: float = 0.0) -> None:
+    def limit_note(self, name: str, azimuth_deg: float, elevation_deg: float) -> str:
+        """Ціль (азимут від півночі, кут місця) виходить за межі камери — текст для оператора, інакше ''."""
+        cfg = self._cams[name]
+        notes = ctl.limit_notes(cfg, ctl.azimuth_to_sensor(azimuth_deg, cfg.north_offset_deg), elevation_deg)
+        return "Досягнуто межі: " + "; ".join(notes) if notes else ""
+
+    def jog(self, name: str, d_azimuth_deg: float, d_elevation_deg: float, speed_deg_s: float = 0.0) -> str:
+        """Крок відносно поточного положення. Повертає напис, якщо крок упирається в межу кута, інакше ''."""
         self._check_manual(name)
+        note = ""
+        snap = self.backend.snapshot(name)
+        if snap is not None:
+            notes = ctl.limit_notes(self._cams[name],
+                                    snap.azimuth_deg + d_azimuth_deg if d_azimuth_deg else None,
+                                    snap.elevation_deg + d_elevation_deg if d_elevation_deg else None)
+            note = "Досягнуто межі: " + "; ".join(notes) if notes else ""
         self.backend.jog(name, d_azimuth_deg, d_elevation_deg, self._speed(name, speed_deg_s))
+        return note
 
     def stop(self, name: str) -> Future:
         """«Стоп» працює завжди, зокрема під час Навчання."""

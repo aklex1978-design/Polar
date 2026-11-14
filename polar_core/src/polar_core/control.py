@@ -360,5 +360,19 @@ def target_to_camera(cfg: CameraControlConfig, azimuth_deg: float, elevation_deg
     return az, cfg.tilt.clamp(elevation_deg)
 
 
+def limit_notes(cfg: CameraControlConfig, azimuth_cam: Optional[float], elevation_deg: Optional[float],
+                tol: float = 0.05) -> List[str]:
+    """Які межі зачепить ціль (кути камери, ще не обмежені): «кут місця — верхня межа 90°» тощо."""
+    notes = []
+    for label, s, v in (("азимут", cfg.pan, azimuth_cam), ("кут місця", cfg.tilt, elevation_deg)):
+        if v is None or s.continuous or s.min_deg is None or s.max_deg is None:
+            continue
+        if v < s.min_deg - tol:
+            notes.append(f"{label} — нижня межа {s.min_deg:g}°")
+        elif v > s.max_deg + tol:
+            notes.append(f"{label} — верхня межа {s.max_deg:g}°")
+    return notes
+
+
 def camera_to_north(cfg: CameraControlConfig, azimuth_deg: float) -> float:
     return wrap360(azimuth_deg + cfg.north_offset_deg)

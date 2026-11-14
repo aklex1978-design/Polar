@@ -104,3 +104,13 @@ def test_servo_raw_range_must_fit_position_mode():
     fixed = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=180.0, min_deg=0.0, max_deg=90.0)
     assert fixed.validate() == [] and fixed.raw_range() == (90.0, 180.0)
     assert ServoSettings("pan", 1, direction=-1).raw_range() == (None, None)          # ковзний контакт
+
+
+def test_limit_notes():
+    from polar_core.control import CameraControlConfig, ServoSettings, limit_notes
+    cfg = CameraControlConfig(1, "К", "camera_1",
+                              pan=ServoSettings("pan", 1, min_deg=10.0, max_deg=350.0),
+                              tilt=ServoSettings("tilt", 2, min_deg=4.0, max_deg=90.0))
+    assert limit_notes(cfg, 5.0, 95.0) == ["азимут — нижня межа 10°", "кут місця — верхня межа 90°"]
+    assert limit_notes(cfg, 100.0, 4.0) == []
+    assert limit_notes(cfg, None, 1.0) == ["кут місця — нижня межа 4°"]

@@ -43,7 +43,20 @@ def test_go_to_uses_north_offset(env):
 
 def test_limits_are_applied(env):
     svc, backend, clock, run = env
+    assert svc.limit_note("Камера 1", 10.0, 120.0) == "Досягнуто межі: кут місця — верхня межа 90°"
+    assert svc.limit_note("Камера 1", 10.0, 45.0) == ""
     assert svc.go_to("Камера 1", 10.0, 120.0) == pytest.approx((10.0, 90.0))
+
+
+def test_jog_reports_limit(env):
+    svc, backend, clock, run = env
+    run(0.1)
+    assert svc.jog("Камера 1", 0.0, -5.0, 60.0) == "Досягнуто межі: кут місця — нижня межа 0°"
+    assert svc.jog("Камера 1", 0.0, 5.0, 60.0) == ""
+    svc.go_to("Камера 1", 0.0, 88.0, 180.0)
+    run(1.0)
+    assert "верхня межа 90°" in svc.jog("Камера 1", 0.0, 5.0, 60.0)
+    assert svc.jog("Камера 1", 10.0, 0.0, 60.0) == ""               # азимут без меж (ковзний контакт)
 
 
 def test_jog_and_stop(env):
