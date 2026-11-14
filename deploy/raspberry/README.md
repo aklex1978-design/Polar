@@ -30,7 +30,7 @@ sudo ./deploy/raspberry/install.sh
 5. ставить MediaMTX і скрипт відео в `/opt/polar`;
 6. створює `/etc/polar/polar.env` і `/etc/polar/pantilt.yaml` (якщо їх ще немає) і копію `polar.env` на boot-розділі;
 7. налаштовує chrony;
-8. вмикає служби `polar-firstboot` (налаштування з boot-розділу), `polar-pantilt` і (якщо `VIDEO_ENABLED=1`) `polar-video`.
+8. вмикає служби `polar-firstboot` (налаштування з boot-розділу), `polar-pantilt`, `polar-rosbridge` і (якщо `VIDEO_ENABLED=1`) `polar-video`.
 
 Після першого запуску — **`sudo reboot`** (змінено UART).
 
