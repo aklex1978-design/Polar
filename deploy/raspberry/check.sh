@@ -25,7 +25,7 @@ else
 fi
 
 echo "Служби"
-for s in polar-pantilt polar-video chrony; do
+for s in polar-pantilt polar-rosbridge polar-video chrony; do
   if systemctl is-active --quiet "$s"; then ok "$s працює"; else bad "$s: $(systemctl is-active "$s") — journalctl -u $s -n 30"; fi
 done
 
@@ -53,6 +53,14 @@ else
   bad "$NS/state не публікується"
   info "вузли: $(sudo -u polar -H bash -c "$ROSCMD; timeout 15 ros2 node list" 2>/dev/null | xargs)"
   info "журнал вузла: journalctl -u polar-pantilt -n 50 --no-pager"
+fi
+
+echo "rosbridge (звʼязок із Polar на Windows)"
+BP="${ROSBRIDGE_PORT:-9090}"
+if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$BP" 2>/dev/null; then
+  ok "порт $BP відкритий; у Polar: «Адреса Raspberry Pi» = $(hostname -I | awk '{print $1}') (або порожньо, якщо RTSP з цього Pi)"
+else
+  bad "rosbridge не слухає порт $BP — journalctl -u polar-rosbridge -n 30"
 fi
 
 echo "Час"

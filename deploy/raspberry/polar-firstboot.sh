@@ -58,7 +58,7 @@ systemctl restart chrony 2>/dev/null || true
 
 # --no-block: під час завантаження служби Polar стартують ПІСЛЯ цієї (Before= у polar-firstboot.service);
 # синхронний restart чекав би на них, а вони — на неї, і завантаження зависало б (взаємне блокування)
-systemctl --no-block restart polar-pantilt.service || true
+systemctl --no-block restart polar-pantilt.service polar-rosbridge.service || true
 if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
   systemctl enable polar-video.service && systemctl --no-block restart polar-video.service || true
 else

@@ -43,6 +43,7 @@ echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] htt
   > /etc/apt/sources.list.d/ros2.list
 apt-get update -q
 apt-get install -y -q ros-humble-ros-base ros-humble-rmw-fastrtps-cpp ros-humble-rmw-cyclonedds-cpp python3-colcon-common-extensions build-essential cmake \
+  ros-humble-rosbridge-server \
   python3-serial chrony v4l-utils ffmpeg usbutils
 
 say "3/8 Користувач polar (доступ до UART і відео)"
@@ -96,9 +97,9 @@ systemctl restart chrony || true
 
 say "8/8 Служби автозапуску"
 install -m 0644 "$HERE/polar-pantilt.service" "$HERE/polar-video.service" "$HERE/polar-firstboot.service" \
-  /etc/systemd/system/
+  "$HERE/polar-rosbridge.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable polar-firstboot.service polar-pantilt.service
+systemctl enable polar-firstboot.service polar-pantilt.service polar-rosbridge.service
 if [ "${VIDEO_ENABLED:-1}" = "1" ]; then
   systemctl enable polar-video.service
 else
@@ -109,12 +110,13 @@ chown -R polar:polar /opt/polar
 say "Готово"
 echo "Камера: ${TOPIC_PREFIX:-/polar}/${CAMERA_NS:-camera_1}, ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}, сервоприводи: ${SERVO_BACKEND:-st3020}"
 [ "${VIDEO_ENABLED:-1}" = "1" ] && echo "Відео: rtsp://$(hostname -I | awk '{print $1}'):8554/${RTSP_PATH:-camera_1}"
+echo "rosbridge для Polar на Windows: $(hostname -I | awk '{print $1}'):${ROSBRIDGE_PORT:-9090}"
 echo "Змініть під цю камеру: sudo nano /boot/firmware/polar.env  (або на Windows: диск system-boot\\polar.env),"
 echo "  потім: sudo systemctl restart polar-firstboot"
 if [ "$REBOOT" = 1 ]; then
   echo "UART змінено — ПОТРІБНЕ ПЕРЕЗАВАНТАЖЕННЯ: sudo reboot"
 else
-  systemctl restart polar-pantilt.service
+  systemctl restart polar-pantilt.service polar-rosbridge.service
   [ "${VIDEO_ENABLED:-1}" = "1" ] && systemctl restart polar-video.service
   echo "Перевірка: sudo $HERE/check.sh"
 fi
