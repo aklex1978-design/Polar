@@ -201,6 +201,14 @@ class BridgeConnection:
         if first:
             self._send({"op": "subscribe", "topic": topic, "type": msg_type, "queue_length": 1})
 
+    def resubscribe(self, topic: str) -> None:
+        """Підписатися заново: rosbridge підбирає QoS за видавцем, що є в момент підписки. Якщо Polar
+        підписався раніше, ніж вузол на Pi почав публікувати (BEST_EFFORT), дані можуть не йти ніколи."""
+        with self._lock:
+            entry = self._subs.get(topic)
+        if entry and self._send({"op": "unsubscribe", "topic": topic}):
+            self._send({"op": "subscribe", "topic": topic, "type": entry[0], "queue_length": 1})
+
     def unsubscribe(self, topic: str) -> None:
         with self._lock:
             known = self._subs.pop(topic, None)
@@ -365,9 +373,21 @@ class _Link:
             conn.advertise(f"{ns}/{topic}", t)
         conn.subscribe(f"{ns}/state", T_STATE, self._on_state)
 
+    RESUBSCRIBE_S = 3.0
+
     def _on_state(self, msg: dict) -> None:
         self.snapshot = snapshot_from_dict(msg)
         self._emit(self.name, self.snapshot)
+
+    def check_state(self, now: float) -> None:
+        """Немає state довше RESUBSCRIBE_S (і з часу останньої спроби) — підписатися заново."""
+        if not self.conn.connected:
+            self._tried = now
+            return
+        last = max(self.snapshot.received_at if self.snapshot else 0.0, getattr(self, "_tried", 0.0))
+        if now - last > self.RESUBSCRIBE_S:
+            self._tried = now
+            self.conn.resubscribe(f"{self.ns}/state")
 
     def detach(self) -> None:
         for topic in ("cmd", "jog", "heartbeat"):
@@ -424,8 +444,10 @@ class RosbridgeControlBackend(ControlBackend):
         while not self._hb_stop.wait(self._hb_period):
             with self._lock:
                 links = list(self._links.values())
+            now = time.monotonic()
             for link in links:
                 link.conn.publish(f"{link.ns}/heartbeat", {})
+                link.check_state(now)
 
     def shutdown(self) -> None:
         self._hb_stop.set()

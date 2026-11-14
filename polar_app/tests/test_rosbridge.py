@@ -86,6 +86,7 @@ class FakePi:
         self.ids_as_base64 = True
         self.big_state = False            # додати в state довге поле (кадр > 65535 байт)
         self.fragment = False
+        self.ignore_subscribes = 0        # скільки перших підписок на state «не спрацюють» (QoS не збігся)
         self.lock = threading.Lock()
         self.clients = []
 
@@ -149,6 +150,9 @@ class Handler(socketserver.BaseRequestHandler):
                 op, topic = m.get("op"), m.get("topic", "")
                 if op == "subscribe" and topic.endswith("/state"):
                     assert m["type"] == rb.T_STATE
+                    if pi.ignore_subscribes > 0:
+                        pi.ignore_subscribes -= 1
+                        continue
                     subscribed.set()
                     with send_lock:                                   # rosbridge іноді шле ping
                         _send_frame(sock, 0x9, b"hi")
@@ -324,6 +328,20 @@ def test_restart_changes_host_and_shares_connection(pi):
         assert wait(3, lambda: any(m["op"] == "unsubscribe" and m["topic"] == "/polar/camera_1/state"
                                    for m in pi.ops))
         assert b.snapshot("Камера 1") is None and len(made) == 1
+    finally:
+        b.shutdown()
+
+
+def test_resubscribes_when_state_never_arrives(pi, monkeypatch):
+    """rosbridge підписався до появи видавця (QoS не збігся) — state не йде; Polar підписується заново."""
+    monkeypatch.setattr(rb._Link, "RESUBSCRIBE_S", 0.5)
+    pi.ignore_subscribes = 1
+    b = rb.RosbridgeControlBackend(connection_factory=lambda h, p: rb.BridgeConnection(h, p, retry_s=(0.05, 0.2)))
+    try:
+        b.start([cam()], ros_settings(pi.port))
+        assert wait(5, lambda: b.snapshot("Камера 1") is not None)
+        ops = [m["op"] for m in pi.ops if m.get("topic") == "/polar/camera_1/state"]
+        assert ops[:3] == ["subscribe", "unsubscribe", "subscribe"]
     finally:
         b.shutdown()
 
