@@ -165,3 +165,20 @@ def test_onvif_digest_is_standard():
     x = onvif._security("u", "pw", nonce=b"0123456789abcdef", created="2026-01-01T00:00:00.000Z")
     expect = base64.b64encode(hashlib.sha1(b"0123456789abcdef2026-01-01T00:00:00.000Zpw").digest()).decode()
     assert expect in x
+
+
+def test_network_stream_decoder_single_thread(monkeypatch):
+    """Мережевий потік відкривається з одним потоком декодера: інакше OpenCV тримає по кадру на потік
+    (на 16-потоковому процесорі ≈ 0,5 с затримки)."""
+    import cv2
+    calls = []
+
+    class Cap:
+        def __init__(self, *args):
+            calls.append(args)
+
+        def set(self, *_a):
+            return True
+    monkeypatch.setattr(cv2, "VideoCapture", Cap)
+    opencv_opener("rtsp://10.0.0.5:8554/camera_1", "rtsp_transport;tcp")()
+    assert calls[0][1] == cv2.CAP_FFMPEG and list(calls[0][2]) == [cv2.CAP_PROP_N_THREADS, 1]
