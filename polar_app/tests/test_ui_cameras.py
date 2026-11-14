@@ -75,6 +75,9 @@ def test_add_camera_validation_and_save(win):
     f.widgets["address"].setText("rtsp://admin:1@cam/x")
     assert "окремих полях" in f.errors["address"].text()
     f.widgets["address"].setText("rtsp://10.0.0.14/stream1")
+    f.widgets["pi_host"].setText("не адреса!")
+    assert "IP-адреса" in f.errors["pi_host"].text()
+    f.widgets["pi_host"].setText("polar-camera-4.local")
     f.widgets["login"].setText("admin")
     f.widgets["password"].setText("секрет")
     f.widgets["stream_res_x"].setText("640")
@@ -86,6 +89,7 @@ def test_add_camera_validation_and_save(win):
     new = [r for r in recs if r.name == "Камера 4"][0]
     assert new.latitude == pytest.approx(50.46) and new.has_password
     assert new.model == "демо" and new.model_id is not None and new.fov_x_deg == 60
+    assert new.pi_host == "polar-camera-4.local"
     assert cm.stream_password(win.ctx.conn, win.ctx.box, new.id) == "секрет"
     assert "Камера 4" in win.control._items                  # з'явилась і в «Управлінні»
     assert wait(6, lambda: win.ctx.video.stats("Камера 4") and win.ctx.video.stats("Камера 4").frames > 3)
@@ -811,12 +815,17 @@ def test_detection_and_ros_settings_screens(win):
     win.stack.setCurrentWidget(win.ros_settings)
     r = win.ros_settings
     assert r.prefix.text() == "/polar" and r.rmw.currentData() == "rmw_fastrtps_cpp"
+    assert r.transport.currentData() == "rosbridge" and r.bridge_port.value() == 9090
+    assert not r.domain.isEnabled() and r.bridge_port.isEnabled()          # параметри DDS — лише для DDS
+    r.transport.setCurrentIndex(r.transport.findData("dds"))
+    assert r.domain.isEnabled() and not r.bridge_port.isEnabled()
     r.rate.setValue(10.0)
     r.save_btn.click()
     assert "Збережено" in r.message.text() and win.ctx.control.ros.state_rate_hz == 10.0
     r.domain.setValue(7)
     r.save_btn.click()
     assert "Перезапустіть програму" in r.message.text()
+    assert win.ctx.settings.ros().transport == "dds"
     r.discovery_mode.setCurrentIndex(1)
     r.discovery.setText("без порту")
     r.save_btn.click()

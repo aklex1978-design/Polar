@@ -62,7 +62,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Залежності
         run: |
-          apt-get update && apt-get install -y python3-serial python3-pytest python3-pip python3-numpy
+          apt-get update && apt-get install -y python3-serial python3-pytest python3-pip python3-numpy \
+            ros-humble-rosbridge-server
           python3 -m pip install -U pip
           python3 -m pip install --no-deps -e polar_core -e polar_app
       - name: colcon build
@@ -86,7 +87,7 @@ jobs:
           ros2 service call /polar/ci/scan polar_interfaces/srv/ScanServos "{first_id: 1, last_id: 5}" | tee scan.txt
           grep -q "ids" scan.txt
           kill %1
-      - name: Наскрізний тест polar_control ↔ pantilt_driver
+      - name: Наскрізні тести polar_control ↔ pantilt_driver (DDS і rosbridge)
         shell: bash
         run: |
           source /opt/ros/humble/setup.bash

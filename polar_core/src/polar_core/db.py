@@ -195,6 +195,10 @@ MIGRATIONS = [
     UPDATE cameras SET model = (SELECT name FROM camera_models WHERE id = cameras.model_id)
         WHERE model_id IS NOT NULL;
     """,
+    # 9 — адреса Raspberry Pi камери для звʼязку через rosbridge (порожньо — хост з адреси потоку)
+    """
+    ALTER TABLE cameras ADD COLUMN pi_host TEXT NOT NULL DEFAULT '';
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

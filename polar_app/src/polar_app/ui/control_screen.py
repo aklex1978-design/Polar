@@ -491,6 +491,10 @@ class ControlScreen(QWidget):
         ros_error = getattr(self.service.backend, "ros_error", "")
         if not st.link_ok and ros_error and not self.service.config(st.name).demo:
             err = ros_error + " — увімкніть «Демо сервоприводів» або встановіть ROS 2"
+        elif not st.link_ok and not self.service.config(st.name).demo:
+            info = getattr(getattr(self.service.backend, "ros", None), "connection_info", None)
+            if info is not None:                 # rosbridge: з яким Pi і чому немає звʼязку
+                err = "; ".join(t for t in (err, info(st.name)) if t)
         self.error_label.setText(err)
         self.error_label.setVisible(bool(err))
         cfg = self.service.config(st.name)

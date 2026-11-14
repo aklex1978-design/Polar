@@ -53,6 +53,7 @@ class CameraRecord:
     video_latency_ms: int = 0               # виміряна затримка відео відносно енкодерів
     # Управління
     ros_namespace: str = ""
+    pi_host: str = ""                       # адреса Raspberry Pi (rosbridge); порожньо — з адреси потоку
     az_min: Optional[float] = None          # None — без меж (ковзний контакт)
     az_max: Optional[float] = None
     el_min: float = 0.0
@@ -129,6 +130,8 @@ class CameraRecord:
             e["ros_namespace"] = "латиниця, цифри, _; наприклад camera_1"
         elif any(o.ros_namespace.strip("/") == self.ros_namespace.strip("/") and o.id != self.id for o in others):
             e["ros_namespace"] = "вже використовується іншою камерою"
+        if self.pi_host and not re.fullmatch(r"[A-Za-z0-9.\-]+|\[[0-9A-Fa-f:]+\]", self.pi_host.strip()):
+            e["pi_host"] = "IP-адреса або імʼя, напр. 192.168.0.120 чи polar-camera-1.local"
         if (self.az_min is None) != (self.az_max is None):
             e["az_min"] = "обидві межі або жодної"
         elif self.az_min is not None and not 0 <= self.az_min < self.az_max <= 360:
@@ -168,7 +171,7 @@ _COLS = {
     "stream_res_x": "stream_res_x", "stream_res_y": "stream_res_y", "fps": "stream_fps",
     "max_detection_latency_ms": "max_detection_latency_ms", "transport": "stream_transport",
     "buffer_ms": "stream_buffer_ms", "video_latency_ms": "stream_latency_ms",
-    "ros_namespace": "ros_namespace", "panorama_path": "panorama_path",
+    "ros_namespace": "ros_namespace", "pi_host": "pi_host", "panorama_path": "panorama_path",
     "demo_servos": "demo_servos", "demo_video": "demo_video",
 }
 

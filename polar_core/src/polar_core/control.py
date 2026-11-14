@@ -29,6 +29,8 @@ AXES = ("pan", "tilt")
 BAUDRATES = (38_400, 57_600, 76_800, 115_200, 128_000, 250_000, 500_000, 1_000_000)
 ST3020_MAX_SPEED_DEG_S = 360.0
 RMW_CHOICES = {"Fast DDS": "rmw_fastrtps_cpp", "Cyclone DDS": "rmw_cyclonedds_cpp"}
+# звʼязок сервера з Pi: rosbridge (WebSocket, ROS 2 на сервері не потрібен) або ROS 2 DDS напряму
+TRANSPORTS = {"rosbridge (WebSocket) — без ROS 2 на сервері": "rosbridge", "ROS 2 DDS (rclpy)": "dds"}
 
 
 def describe_errors(flags: int) -> str:
@@ -110,6 +112,7 @@ class CameraControlConfig:
     pan: ServoSettings = field(default_factory=lambda: default_servo("pan"))
     tilt: ServoSettings = field(default_factory=lambda: default_servo("tilt"))
     demo: bool = False             # сервоприводи — імітатор (без ROS 2 і Raspberry Pi)
+    host: str = ""                 # адреса Raspberry Pi для rosbridge (з форми камери або з адреси потоку)
 
     def validate(self) -> List[str]:
         errors = self.pan.validate() + self.tilt.validate()
@@ -124,6 +127,8 @@ class CameraControlConfig:
 
 @dataclass
 class RosSettings:
+    transport: str = "rosbridge"     # rosbridge | dds
+    bridge_port: int = 9090          # порт rosbridge_server на Pi
     domain_id: int = 0
     rmw: str = "rmw_fastrtps_cpp"
     interface: str = ""              # порожньо — усі інтерфейси
@@ -136,6 +141,10 @@ class RosSettings:
 
     def validate(self) -> List[str]:
         errors = []
+        if self.transport not in TRANSPORTS.values():
+            errors.append("невідомий спосіб звʼязку з Pi")
+        if not 1 <= self.bridge_port <= 65535:
+            errors.append("порт rosbridge — 1–65535")
         if not 0 <= self.domain_id <= 101:
             errors.append("ROS_DOMAIN_ID — 0–101")
         if self.rmw not in RMW_CHOICES.values():
@@ -209,14 +218,26 @@ _SERVO_COLS = ("servo_id", "direction", "zero_offset_deg", "gear_ratio", "max_sp
                "acceleration", "torque_limit_pct", "temperature_limit_c", "min_deg", "max_deg")
 
 
+def host_from_url(url: str) -> str:
+    """Хост з адреси потоку (rtsp://user@192.168.0.120:8554/x → 192.168.0.120); USB-пристрій — порожньо."""
+    from urllib.parse import urlsplit
+    if "://" not in url:
+        return ""
+    try:
+        return urlsplit(url.strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
 def load_control_configs(conn: sqlite3.Connection) -> List[CameraControlConfig]:
     """Камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
     cams = conn.execute("SELECT id, name, ros_namespace, north_offset_deg, servo_port, servo_baudrate, "
-                        "demo_servos FROM cameras ORDER BY id").fetchall()
+                        "demo_servos, pi_host, stream_url FROM cameras ORDER BY id").fetchall()
     result = []
     for c in cams:
         cfg = CameraControlConfig(camera_id=c[0], name=c[1], namespace=c[2] or f"camera_{c[0]}",
-                                  north_offset_deg=c[3], port=c[4], baudrate=c[5], demo=bool(c[6]))
+                                  north_offset_deg=c[3], port=c[4], baudrate=c[5], demo=bool(c[6]),
+                                  host=(c[7] or "").strip() or host_from_url(c[8] or ""))
         for row in conn.execute(f"SELECT axis, {', '.join(_SERVO_COLS)} FROM servo_settings "
                                 "WHERE camera_id = ?", (c[0],)):
             setattr(cfg, row[0], ServoSettings(row[0], *row[1:]))
