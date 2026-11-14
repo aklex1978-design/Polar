@@ -104,6 +104,14 @@ def test_scan_zero_and_change_id(screen):
     assert wait(2, lambda: "ID змінено" in s.message.text()), s.message.text()
     s._on_zero(("pan",))
     assert wait(2, lambda: "збережено" in s.message.text()), s.message.text()
+    asked = []
+    s.confirm = lambda text: asked.append(text) or False
+    s._on_recenter()
+    assert asked and "горизонт" in asked[0]                             # відмова — нічого не змінено
+    s.confirm = lambda text: True
+    s._on_recenter()
+    assert wait(2, lambda: "середину ходу" in s.message.text()), s.message.text()
+    assert s.cols["tilt"].zero.value() == 180.0
 
 
 def test_telemetry_shown(screen):

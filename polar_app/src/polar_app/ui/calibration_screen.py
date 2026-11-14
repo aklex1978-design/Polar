@@ -1,12 +1,15 @@
-"""«Обʼєкти управління / Калібрування»: перегляд камери з центром, колами поля зору і віссю нахилу; панорама з фігурою
-поля зору; перевірка похибки розміщення за орієнтиром."""
+"""Калібрування камери — вкладки «Калібрування» і «Панорама і маска» екрана «Обʼєкти управління / Управління».
+
+Живий кадр (CameraView) спільний з екраном «Управління»: на нього накладаються центр, кола поля зору, вісь
+нахилу і орієнтири. Тут — центр, нахил γ, перевірка похибки за орієнтиром; панорама з фігурою поля зору,
+маска зони виявлення і ручне введення кутів. Поворот камери — кнопками «Управління» (▲ ▼ ◀ ▶)."""
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGroupBox, QHBoxLayout, QLabel, QPushButton,
                              QSizePolicy, QVBoxLayout, QWidget)
@@ -14,7 +17,6 @@ from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGroupBox, QHBoxLayout, 
 from polar_core import calibration as cal
 from polar_core import cameras as cm
 from polar_core.angles import wrap360
-from polar_core.control import ManualControlLocked
 from polar_core.mask import LOWER, UPPER, DetectionMask, MaskItem, load_mask, save_mask
 from polar_core.projection import CameraModel, split_wrapped
 
@@ -331,49 +333,45 @@ class PanoramaView(QWidget):
         p.end()
 
 
-class CalibrationScreen(QWidget):
-    closed = pyqtSignal()
+class CalibrationPanel:
+    """Логіка і віджети калібрування для однієї вибраної камери; вкладки — calib_tab і pano_tab."""
 
-    def __init__(self, ctx, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, ctx, view: CameraView, say: Callable[[str, str], None]) -> None:
         self.ctx = ctx
+        self.view = view
+        self._say_cb = say
         self.rec = None
         self.calib: Optional[cal.Calibration] = None
-        self._streaming: Optional[str] = None
+        self.criterion = 0.5
         self._center_img: Optional[Tuple[float, float]] = None     # центр у пікселях кадру потоку
         self._img_size: Optional[Tuple[int, int]] = None
+        self._pano_version = None
+        self.mask: Optional[DetectionMask] = None
+        self._mask_dirty = False
         self.check = cal.LandmarkCheck()
+        view.center_moved.connect(self._on_center_moved)
+        view.clicked.connect(self._on_landmark)
+        self.calib_tab = self._build_calib_tab()
+        self.pano_tab = self._build_pano_tab()
 
-        v = QVBoxLayout(self)
-        self.title = QLabel("Обʼєкти управління / Калібрування")
-        self.title.setStyleSheet("font-size: 15px; font-weight: 600")
-        v.addWidget(self.title)
-        self.view = CameraView()
-        self.view.center_moved.connect(self._on_center_moved)
-        self.view.clicked.connect(self._on_landmark)
-        v.addWidget(self.view, 1)
-
+    # --- вкладка «Калібрування» ------------------------------------------------------------------
+    def _build_calib_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        hint = QLabel("Увімкніть «Накладки калібрування» над відео: червоне перехрестя — центр камери, його можна "
+                      "перетягнути мишею; жовті кола — частки поля зору; зелена лінія — вісь нахилу γ. "
+                      "Камеру повертайте кнопками ▲ ▼ ◀ ▶ вище.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {QUIET}")
+        v.addWidget(hint)
         row = QHBoxLayout()
         self.save_center_btn = QPushButton("Зберегти центр")
         self.save_center_btn.clicked.connect(self.save_center)
         self.reset_center_btn = QPushButton("Скинути центр")
         self.reset_center_btn.clicked.connect(self.reset_center)
-        self.close_btn = QPushButton("Закрити")
-        self.close_btn.clicked.connect(self.closed.emit)
-        self.jog_btns = []
-        row.addWidget(QLabel("Поворот:"))
-        for text, da, de in (("◀", -1, 0), ("▶", 1, 0), ("▲", 0, 1), ("▼", 0, -1)):
-            b = QPushButton(text)
-            b.setFixedWidth(34)
-            b.clicked.connect(lambda _=False, a=da, e=de: self._jog(a, e))
-            row.addWidget(b)
-            self.jog_btns.append(b)
-        self.step = QDoubleSpinBox()
-        self.step.setRange(0.1, 90)
-        self.step.setValue(10.0)
-        self.step.setSuffix("°")
-        row.addWidget(self.step)
-        row.addStretch(1)
+        row.addWidget(self.save_center_btn)
+        row.addWidget(self.reset_center_btn)
+        row.addSpacing(24)
         row.addWidget(QLabel("Нахил γ:"))
         self.tilt = QDoubleSpinBox()
         self.tilt.setRange(-180.0, 180.0)
@@ -387,10 +385,7 @@ class CalibrationScreen(QWidget):
         self.save_tilt_btn = QPushButton("Зберегти нахил")
         self.save_tilt_btn.clicked.connect(self.save_tilt)
         row.addWidget(self.save_tilt_btn)
-        row.addSpacing(12)
-        row.addWidget(self.save_center_btn)
-        row.addWidget(self.reset_center_btn)
-        row.addWidget(self.close_btn)
+        row.addStretch(1)
         v.addLayout(row)
 
         acc = QGroupBox("Перевірка похибки розміщення")
@@ -411,7 +406,13 @@ class CalibrationScreen(QWidget):
         ah.addWidget(self.error_label, 1)
         ah.addWidget(self.save_error_btn)
         v.addWidget(acc)
+        v.addStretch(1)
+        return w
 
+    # --- вкладка «Панорама і маска» ------------------------------------------------------------
+    def _build_pano_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
         self.panorama = PanoramaView()
         self.panorama.mask_changed.connect(self._on_mask_changed)
         ph = QHBoxLayout()
@@ -465,51 +466,40 @@ class CalibrationScreen(QWidget):
         mh.addStretch(1)
         mh.addWidget(self.manual_save)
         v.addWidget(manual)
-        self.message = QLabel("")
-        self.message.setWordWrap(True)
-        v.addWidget(self.message)
+        v.addStretch(1)
+        return w
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(100)
-
-    # --- відкриття / вихід ------------------------------------------------------------
-    def open_camera(self, camera_id: int) -> None:
-        self.leave()
+    # --- вибір камери ------------------------------------------------------------------------------
+    def open_camera(self, camera_id: Optional[int]) -> None:
+        enabled = camera_id is not None
+        self.calib_tab.setEnabled(enabled)
+        self.pano_tab.setEnabled(enabled)
+        if not enabled:
+            self.rec = None
+            return
         self.rec = self.ctx.camera(camera_id)
         with self.ctx.control._db_lock:
             self.calib = cal.load(self.ctx.conn, camera_id)
             self.criterion = cal.accuracy_criterion(self.ctx.conn)
-        self.title.setText(f"Обʼєкти управління / Калібрування · {self.rec.name}")
+            self.mask = load_mask(self.ctx.conn, camera_id)
         self._loading_tilt = True
         self.tilt.setValue(self.rec.tilt_deg)
         self._loading_tilt = False
         self._tilt_value = self.rec.tilt_deg
         self._img_size = None
         self._center_img = None
-        self.view.pixmap = None
         self.check.clear()
         self.view.landmarks = []
         self.landmark_btn.setChecked(False)
-        self._say("Перетягніть червоне перехрестя в точку зображення, що відповідає кутам датчика.")
         self._show_error()
         self.save_tilt_btn.setEnabled(False)
-        with self.ctx.control._db_lock:
-            self.mask = load_mask(self.ctx.conn, camera_id)
         self.panorama.mask = self.mask
         self._mask_dirty = False
+        self.save_mask_btn.setText("Зберегти маску")
         self.zone_btn.setChecked(False)
         self._pano_version = None
         self.panorama.pixmap = None
         self.manual_on.setChecked(False)
-        if self.ctx.video.acquire(self.rec.name):
-            self._streaming = self.rec.name
-        self.refresh()
-
-    def leave(self) -> None:
-        if self._streaming:
-            self.ctx.video.release(self._streaming)
-            self._streaming = None
 
     # --- модель і стан ---------------------------------------------------------------------
     def _size(self) -> Tuple[int, int]:
@@ -525,8 +515,9 @@ class CalibrationScreen(QWidget):
         m.cx, m.cy = self._center_img
         return m
 
-    def refresh(self) -> None:
-        if self.rec is None or not self.isVisible():
+    def refresh(self, overlays: bool = True) -> None:
+        """Накладки на спільному кадрі (якщо увімкнено) і фігура поля зору на панорамі."""
+        if self.rec is None:
             return
         sf = self.ctx.video.latest(self.rec.name)
         if sf is not None:
@@ -537,10 +528,8 @@ class CalibrationScreen(QWidget):
                     self._center_img = (self._center_img[0] * size[0] / old[0],
                                         self._center_img[1] * size[1] / old[1])
                 self._img_size = size
-            self.view.pixmap = frame_pixmap(sf.image)
         m = self.model()
         self.view.frame_size = self._size()
-        self.view.model = m
         st = self.ctx.control.status(self.rec.name)
         lines = [f"Центр камери: X {m.cx:.0f}, Y {m.cy:.0f} px",
                  f"Нахил γ: {m.tilt_deg:+.2f}°" + ("" if m.tilt_deg == self.rec.tilt_deg else " (не збережено)")]
@@ -567,14 +556,15 @@ class CalibrationScreen(QWidget):
             self.panorama.outline = None
             self.panorama.center = None
             self.panorama.azimuth = None
-        self.view.text_lines = lines
-        for b in self.jog_btns:
-            b.setEnabled(st.link_ok)
+        self.view.model = m if overlays else None
+        self.view.text_lines = lines if overlays else []
         self.view.update()
         self.panorama.update()
 
     # --- центр -------------------------------------------------------------------------------
     def _on_center_moved(self, u: float, v: float) -> None:
+        if self.rec is None:
+            return
         self._center_img = (u, v)
         self.view.landmarks = []
         if self.check.observations:
@@ -602,7 +592,7 @@ class CalibrationScreen(QWidget):
             return
         ver = learning.version.get(self.rec.name, 0)
         pano = learning.panorama(self.rec.name)
-        key = (id(pano), ver)
+        key = (self.rec.name, id(pano), ver)
         if key == self._pano_version:
             return
         self._pano_version = key
@@ -697,6 +687,8 @@ class CalibrationScreen(QWidget):
             self._say("Клацніть по орієнтиру; потім поверніть камеру (◀ ▶ ▲ ▼) і клацніть по ньому знову.")
 
     def _on_landmark(self, u: float, v: float) -> None:
+        if self.rec is None:
+            return
         sf = self.ctx.video.latest(self.rec.name)
         if sf is None or not sf.has_angles:
             self._say("Немає кутів кадру — позначка не врахована (немає звʼязку з сервоприводами).", BAD)
@@ -744,13 +736,5 @@ class CalibrationScreen(QWidget):
         self._show_error()
         self._say(f"Похибку розміщення {err:.2f}° записано в калібрування камери.", GOOD)
 
-    # --- поворот камери ------------------------------------------------------------------------
-    def _jog(self, d_az: int, d_el: int) -> None:
-        try:
-            self.ctx.control.jog(self.rec.name, d_az * self.step.value(), d_el * self.step.value(), 0.0)
-        except (ManualControlLocked, RuntimeError) as e:
-            self._say(str(e), BAD)
-
     def _say(self, text: str, color: str = "") -> None:
-        self.message.setText(text)
-        self.message.setStyleSheet(f"color: {color}" if color else "")
+        self._say_cb(text, color)

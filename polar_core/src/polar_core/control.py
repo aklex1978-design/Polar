@@ -29,6 +29,8 @@ AXES = ("pan", "tilt")
 BAUDRATES = (38_400, 57_600, 76_800, 115_200, 128_000, 250_000, 500_000, 1_000_000)
 ST3020_MAX_SPEED_DEG_S = 360.0
 RMW_CHOICES = {"Fast DDS": "rmw_fastrtps_cpp", "Cyclone DDS": "rmw_cyclonedds_cpp"}
+# звʼязок сервера з Pi: rosbridge (WebSocket, ROS 2 на сервері не потрібен) або ROS 2 DDS напряму
+TRANSPORTS = {"rosbridge (WebSocket) — без ROS 2 на сервері": "rosbridge", "ROS 2 DDS (rclpy)": "dds"}
 
 
 def describe_errors(flags: int) -> str:
@@ -83,7 +85,30 @@ class ServoSettings:
             errors.append("нижня межа кута має бути меншою за верхню")
         if self.axis == "tilt" and self.min_deg is None:
             errors.append("для кута місця межі обовʼязкові")
+        lo, hi = self.raw_range()
+        if lo is not None and (lo < -0.5 or hi > 360.5):
+            errors.append(f"з цими напрямком, нулем і передавальним числом вал має пройти {lo:.0f}…{hi:.0f}°, "
+                          "а сервопривід у режимі положення працює лише в 0…360° — змініть напрямок або "
+                          "зміщення нуля (напр. «Встановити нуль» посередині ходу)")
         return errors
+
+    def freed(self) -> "ServoSettings":
+        """Копія з межами на весь хід вала (0…360° у режимі положення) — для виставлення нуля, коли
+        справжнє положення камери лежить за звичайними межами осі. Ковзний контакт — без змін."""
+        from dataclasses import replace
+        if self.continuous or self.min_deg is None or self.max_deg is None:
+            return replace(self)
+        a = self.direction * (0.0 - self.zero_offset_deg) / self.gear_ratio
+        b = self.direction * (360.0 - self.zero_offset_deg) / self.gear_ratio
+        return replace(self, min_deg=round(min(a, b), 3), max_deg=round(max(a, b), 3))
+
+    def raw_range(self) -> Tuple[Optional[float], Optional[float]]:
+        """Кути вала сервопривода для меж осі (None — без меж, ковзний контакт)."""
+        if self.continuous or self.min_deg is None or self.max_deg is None:
+            return None, None
+        a = self.zero_offset_deg + self.direction * self.min_deg * self.gear_ratio
+        b = self.zero_offset_deg + self.direction * self.max_deg * self.gear_ratio
+        return min(a, b), max(a, b)
 
     def clamp(self, axis_deg: float) -> float:
         if self.min_deg is not None:
@@ -110,6 +135,12 @@ class CameraControlConfig:
     pan: ServoSettings = field(default_factory=lambda: default_servo("pan"))
     tilt: ServoSettings = field(default_factory=lambda: default_servo("tilt"))
     demo: bool = False             # сервоприводи — імітатор (без ROS 2 і Raspberry Pi)
+    host: str = ""                 # адреса Raspberry Pi для rosbridge (з форми камери або з адреси потоку)
+
+    def freed(self) -> "CameraControlConfig":
+        """Копія без програмних меж кута (лише хід вала) — режим «Зняти межі» при виставленні нуля."""
+        from dataclasses import replace
+        return replace(self, pan=self.pan.freed(), tilt=self.tilt.freed())
 
     def validate(self) -> List[str]:
         errors = self.pan.validate() + self.tilt.validate()
@@ -124,6 +155,8 @@ class CameraControlConfig:
 
 @dataclass
 class RosSettings:
+    transport: str = "rosbridge"     # rosbridge | dds
+    bridge_port: int = 9090          # порт rosbridge_server на Pi
     domain_id: int = 0
     rmw: str = "rmw_fastrtps_cpp"
     interface: str = ""              # порожньо — усі інтерфейси
@@ -136,6 +169,10 @@ class RosSettings:
 
     def validate(self) -> List[str]:
         errors = []
+        if self.transport not in TRANSPORTS.values():
+            errors.append("невідомий спосіб звʼязку з Pi")
+        if not 1 <= self.bridge_port <= 65535:
+            errors.append("порт rosbridge — 1–65535")
         if not 0 <= self.domain_id <= 101:
             errors.append("ROS_DOMAIN_ID — 0–101")
         if self.rmw not in RMW_CHOICES.values():
@@ -209,14 +246,26 @@ _SERVO_COLS = ("servo_id", "direction", "zero_offset_deg", "gear_ratio", "max_sp
                "acceleration", "torque_limit_pct", "temperature_limit_c", "min_deg", "max_deg")
 
 
+def host_from_url(url: str) -> str:
+    """Хост з адреси потоку (rtsp://user@192.168.0.120:8554/x → 192.168.0.120); USB-пристрій — порожньо."""
+    from urllib.parse import urlsplit
+    if "://" not in url:
+        return ""
+    try:
+        return urlsplit(url.strip()).hostname or ""
+    except ValueError:
+        return ""
+
+
 def load_control_configs(conn: sqlite3.Connection) -> List[CameraControlConfig]:
-    """Камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
+    """Активні камери з налаштуваннями керування. Камера без простору імен ROS береться за назвою."""
     cams = conn.execute("SELECT id, name, ros_namespace, north_offset_deg, servo_port, servo_baudrate, "
-                        "demo_servos FROM cameras ORDER BY id").fetchall()
+                        "demo_servos, pi_host, stream_url FROM cameras WHERE active = 1 ORDER BY id").fetchall()
     result = []
     for c in cams:
         cfg = CameraControlConfig(camera_id=c[0], name=c[1], namespace=c[2] or f"camera_{c[0]}",
-                                  north_offset_deg=c[3], port=c[4], baudrate=c[5], demo=bool(c[6]))
+                                  north_offset_deg=c[3], port=c[4], baudrate=c[5], demo=bool(c[6]),
+                                  host=(c[7] or "").strip() or host_from_url(c[8] or ""))
         for row in conn.execute(f"SELECT axis, {', '.join(_SERVO_COLS)} FROM servo_settings "
                                 "WHERE camera_id = ?", (c[0],)):
             setattr(cfg, row[0], ServoSettings(row[0], *row[1:]))
@@ -324,6 +373,20 @@ def target_to_camera(cfg: CameraControlConfig, azimuth_deg: float, elevation_deg
     if not cfg.pan.continuous:
         az = cfg.pan.clamp(az)
     return az, cfg.tilt.clamp(elevation_deg)
+
+
+def limit_notes(cfg: CameraControlConfig, azimuth_cam: Optional[float], elevation_deg: Optional[float],
+                tol: float = 0.05) -> List[str]:
+    """Які межі зачепить ціль (кути камери, ще не обмежені): «кут місця — верхня межа 90°» тощо."""
+    notes = []
+    for label, s, v in (("азимут", cfg.pan, azimuth_cam), ("кут місця", cfg.tilt, elevation_deg)):
+        if v is None or s.continuous or s.min_deg is None or s.max_deg is None:
+            continue
+        if v < s.min_deg - tol:
+            notes.append(f"{label} — нижня межа {s.min_deg:g}°")
+        elif v > s.max_deg + tol:
+            notes.append(f"{label} — верхня межа {s.max_deg:g}°")
+    return notes
 
 
 def camera_to_north(cfg: CameraControlConfig, azimuth_deg: float) -> float:

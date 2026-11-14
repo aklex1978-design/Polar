@@ -1,4 +1,7 @@
-"""Екран «Обʼєкти управління / Управління»: стан камер, цільові кути, ручне керування, Стоп, сервоприводи."""
+"""Екран «Обʼєкти управління / Управління»: одна форма керування і калібрування камери.
+
+Завжди видно: список камер, живий кадр (з накладками калібрування за бажанням), поточні кути, перехід до цілі,
+кроки ▲ ▼ ◀ ▶ і «Стоп». Нижче — вкладки «Сервоприводи», «Калібрування», «Панорама і маска»."""
 from __future__ import annotations
 
 import copy
@@ -10,11 +13,12 @@ from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
                              QGridLayout, QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                              QListWidget, QListWidgetItem, QMenu, QPushButton, QScrollArea,
-                             QSpinBox, QSplitter, QVBoxLayout, QWidget)
+                             QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from polar_core.control import (BAUDRATES, AXES, CameraControlConfig, CameraStatus, ManualControlLocked,
                                 ServoSettings, ServoTelemetry)
 
+from .calibration_screen import CalibrationPanel, CameraView
 from .common import BAD, GOOD, WARN, frame_pixmap
 AXIS_TITLE = {"pan": "Горизонтальний (азимут)", "tilt": "Вертикальний (кут місця)"}
 
@@ -146,11 +150,7 @@ class ControlScreen(QWidget):
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.addWidget(self._build_list())
-        right = QScrollArea()
-        right.setWidgetResizable(True)
-        right.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        right.setWidget(self._build_details())
-        splitter.addWidget(right)
+        splitter.addWidget(self._build_details())
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([270, 800])
         lay = QVBoxLayout(self)
@@ -177,109 +177,164 @@ class ControlScreen(QWidget):
         return box
 
     def _build_details(self) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
+        """Верх (завжди видно): відео і керування; низ: вкладки. Межу між ними можна перетягнути."""
+        top = QWidget()
+        v = QVBoxLayout(top)
+        v.setContentsMargins(0, 0, 0, 0)
+        head = QHBoxLayout()
         self.title = QLabel("Обʼєкти управління / Управління")
         self.title.setStyleSheet("font-size: 15px; font-weight: 600")
-        v.addWidget(self.title)
-        demo = QHBoxLayout()
+        head.addWidget(self.title)
+        head.addStretch(1)
         self.demo_servos = QCheckBox("Демо сервоприводів")
         self.demo_servos.setToolTip("Імітатор замість Raspberry Pi і ROS 2 — лише для цієї камери")
         self.demo_video = QCheckBox("Демо відео")
         self.demo_video.setToolTip("Синтетична сцена замість відеопотоку — лише для цієї камери")
         self.demo_servos.toggled.connect(lambda on: self._on_demo(servos=on))
         self.demo_video.toggled.connect(lambda on: self._on_demo(video=on))
-        demo.addWidget(self.demo_servos)
-        demo.addWidget(self.demo_video)
-        demo.addStretch(1)
-        v.addLayout(demo)
+        head.addWidget(self.demo_servos)
+        head.addWidget(self.demo_video)
+        v.addLayout(head)
 
         video = QGroupBox("Відео")
         vv = QVBoxLayout(video)
-        self.preview = QLabel("Немає кадру")
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setMinimumSize(480, 270)
-        self.preview.setStyleSheet("background: #202020; color: #bbbbbb")
-        vv.addWidget(self.preview)
+        vv.setContentsMargins(6, 4, 6, 4)
+        self.view = CameraView()
+        self.view.interactive = False
+        self.view.setMinimumSize(400, 225)
+        vv.addWidget(self.view, 1)
+        vrow = QHBoxLayout()
         self.video_info = QLabel("")
         self.video_info.setWordWrap(True)
-        vv.addWidget(self.video_info)
-        v.addWidget(video)
+        vrow.addWidget(self.video_info, 1)
+        self.overlays = QCheckBox("Накладки калібрування")
+        self.overlays.setToolTip("Центр камери (перехрестя), кола поля зору, вісь нахилу γ і орієнтири на кадрі")
+        self.overlays.toggled.connect(lambda _on: self._overlays_changed())
+        vrow.addWidget(self.overlays)
+        vv.addLayout(vrow)
+        v.addWidget(video, 1)
 
-        # поточні кути
-        cur = QGroupBox("Поточні кути (від датчика)")
-        h = QHBoxLayout(cur)
-        h.setSpacing(28)
+        # керування: поточні кути, ціль, кроки, Стоп — один блок
+        ctl_box = QGroupBox("Керування")
+        g = QGridLayout(ctl_box)
+        g.setContentsMargins(8, 4, 8, 4)
+        cur = QHBoxLayout()
+        cur.setSpacing(22)
         self.cur_az, self.cur_el, self.cur_move = QLabel("Азимут: …"), QLabel("Кут місця: …"), QLabel("Рух: …")
         self.link_label = QLabel("")
         for lab in (self.cur_az, self.cur_el, self.cur_move, self.link_label):
-            h.addWidget(lab)
-        h.addStretch(1)
-        v.addWidget(cur)
-        self.error_label = QLabel("")
-        self.error_label.setStyleSheet(f"color: {BAD}")
-        self.error_label.setVisible(False)
-        v.addWidget(self.error_label)
-
-        # цільові кути
-        tgt = QGroupBox("Цільові кути")
-        h = QHBoxLayout(tgt)
+            cur.addWidget(lab)
+        cur.addStretch(1)
+        g.addLayout(cur, 0, 0, 1, 7)
         self.tgt_az = _spin(0, 359.9, 0, 1, "°")
         self.tgt_az.setWrapping(True)
         self.tgt_el = _spin(0, 90, 0, 1, "°")
         self.go_btn = QPushButton("Перейти")
         self.go_btn.setDefault(True)
         self.go_btn.clicked.connect(self._on_go)
-        h.addWidget(QLabel("Азимут"))
-        h.addWidget(self.tgt_az)
-        h.addWidget(QLabel("Кут місця"))
-        h.addWidget(self.tgt_el)
-        h.addWidget(self.go_btn)
-        h.addStretch(1)
-        v.addWidget(tgt)
-
-        # ручне керування і Стоп
-        jog = QGroupBox("Ручне керування")
-        g = QGridLayout(jog)
+        tgt = QHBoxLayout()
+        tgt.addWidget(QLabel("Ціль: азимут"))
+        tgt.addWidget(self.tgt_az)
+        tgt.addWidget(QLabel("кут місця"))
+        tgt.addWidget(self.tgt_el)
+        tgt.addWidget(self.go_btn)
+        g.addLayout(tgt, 1, 0, 1, 1)
         self.btn_up, self.btn_down = QPushButton("▲"), QPushButton("▼")
         self.btn_left, self.btn_right = QPushButton("◀"), QPushButton("▶")
         for b in (self.btn_up, self.btn_down, self.btn_left, self.btn_right):
-            b.setFixedSize(40, 34)
+            b.setFixedSize(38, 30)
         self.btn_up.clicked.connect(lambda: self._on_jog(0, +1))
         self.btn_down.clicked.connect(lambda: self._on_jog(0, -1))
         self.btn_left.clicked.connect(lambda: self._on_jog(-1, 0))
         self.btn_right.clicked.connect(lambda: self._on_jog(+1, 0))
-        g.addWidget(self.btn_up, 0, 1)
-        g.addWidget(self.btn_left, 1, 0)
-        g.addWidget(self.btn_right, 1, 2)
-        g.addWidget(self.btn_down, 2, 1)
+        pad = QGridLayout()
+        pad.setSpacing(2)
+        pad.addWidget(self.btn_up, 0, 1)
+        pad.addWidget(self.btn_left, 1, 0)
+        pad.addWidget(self.btn_right, 1, 2)
+        pad.addWidget(self.btn_down, 2, 1)
+        g.addLayout(pad, 1, 2, 2, 1)
         form = QFormLayout()
         self.step = _spin(0.1, 90, 5, 1, "°")
         self.speed = _spin(1, 360, 60, 0, " °/с")
         form.addRow("Крок", self.step)
         form.addRow("Швидкість", self.speed)
-        g.addLayout(form, 0, 3, 3, 1)
-        g.setColumnMinimumWidth(4, 24)
-        g.setColumnStretch(6, 1)
+        g.addLayout(form, 1, 3, 2, 1)
         self.stop_btn = QPushButton("Стоп")
-        self.stop_btn.setMinimumSize(120, 44)
+        self.stop_btn.setMinimumSize(110, 44)
         self.stop_btn.setStyleSheet(f"QPushButton {{ background: {BAD}; color: white; font-weight: 700;"
                                     " border-radius: 6px }")
         self.stop_btn.clicked.connect(self._on_stop)
-        g.addWidget(self.stop_btn, 1, 5)
-        v.addWidget(jog)
-
-        v.addWidget(self._build_servo_group())
+        g.addWidget(self.stop_btn, 1, 5, 2, 1)
+        g.setColumnMinimumWidth(1, 16)
+        g.setColumnMinimumWidth(4, 16)
+        g.setColumnStretch(6, 1)
+        v.addWidget(ctl_box)
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet(f"color: {BAD}")
+        self.error_label.setWordWrap(True)
+        self.error_label.setVisible(False)
+        v.addWidget(self.error_label)
         self.message = QLabel("")
         self.message.setWordWrap(True)
         v.addWidget(self.message)
-        v.addStretch(1)
+
+        # вкладки
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._scroll(self._build_servo_group()), "Сервоприводи")
+        self.calib: Optional[CalibrationPanel] = None
+        if self.ctx is not None:
+            self.calib = CalibrationPanel(self.ctx, self.view, lambda text, color="": self._say_color(text, color))
+            self.calib_index = self.tabs.addTab(self._scroll(self.calib.calib_tab), "Калібрування")
+            self.pano_index = self.tabs.addTab(self._scroll(self.calib.pano_tab), "Панорама і маска")
+        self.tabs.currentChanged.connect(self._on_tab)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(top)
+        split.addWidget(self.tabs)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        split.setChildrenCollapsible(False)
         self._manual_widgets = [self.tgt_az, self.tgt_el, self.go_btn, self.btn_up, self.btn_down,
                                 self.btn_left, self.btn_right]
-        return w
+        return split
+
+    @staticmethod
+    def _scroll(w: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(w)
+        return area
+
+    def _on_tab(self, index: int) -> None:
+        if self.calib is not None and index == self.calib_index and not self.overlays.isChecked():
+            self.overlays.setChecked(True)            # калібрування — з накладками на кадрі
+        self._overlays_changed()
+
+    def _overlays_changed(self) -> None:
+        on = self.overlays.isChecked() and self.calib is not None
+        # центр перетягується і орієнтири ставляться лише на вкладці «Калібрування»
+        self.view.interactive = on and self.tabs.currentIndex() == getattr(self, "calib_index", -1)
+        if not on:
+            self.view.model = None
+            self.view.text_lines = []
+            self.view.landmark_mode = False
+        elif self.calib is not None:
+            self.view.landmark_mode = self.calib.landmark_btn.isChecked()
+        self.view.update()
+
+    def open_calibration(self, camera_id: int) -> None:
+        """Кнопка «Калібрування» в рядку списку: вибрати камеру і відкрити вкладку калібрування."""
+        name = next((n for n in self.service.camera_names() if self.service.config(n).camera_id == camera_id), None)
+        if name is not None:
+            self.select_camera(name)
+        if self.calib is not None:
+            self.tabs.setCurrentIndex(self.calib_index)
+            self.overlays.setChecked(True)
 
     def _build_servo_group(self) -> QWidget:
-        box = QGroupBox("Сервоприводи ST3020")
+        box = QWidget()
         v = QVBoxLayout(box)
         bus = QHBoxLayout()
         bus2 = QHBoxLayout()
@@ -337,12 +392,23 @@ class ControlScreen(QWidget):
         menu = QMenu(self.zero_btn)
         for text, axes in (("Обидві осі", AXES), (AXIS_TITLE["pan"], ("pan",)), (AXIS_TITLE["tilt"], ("tilt",))):
             menu.addAction(text).triggered.connect(lambda _=False, a=axes: self._on_zero(a))
+        menu.addSeparator()
+        self.recenter_action = menu.addAction("Вертикальний: нуль + середина ходу сервопривода…")
+        self.recenter_action.setToolTip("Програмно перевизначити нуль сервопривода: поточне положення стає серединою "
+                                        "ходу вала (180°), тож від нуля кут місця може йти і вниз, і вгору")
+        self.recenter_action.triggered.connect(self._on_recenter)
         self.zero_btn.setMenu(menu)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.clicked.connect(self._on_save)
         self.revert_btn = QPushButton("Скасувати зміни")
         self.revert_btn.clicked.connect(self._load_form)
         btns.addWidget(self.zero_btn)
+        self.free_limits = QCheckBox("Зняти межі кута (для виставлення нуля)")
+        self.free_limits.setToolTip("Тимчасово дозволити кут місця нижче 0° і вище 90° (і азимут за межами), щоб "
+                                    "навести камеру на справжній горизонт і встановити нуль. У базі межі не "
+                                    "змінюються; знімається при виході з екрана або виборі іншої камери.")
+        self.free_limits.toggled.connect(self._on_free_limits)
+        btns.addWidget(self.free_limits)
         btns.addStretch(1)
         btns.addWidget(self.revert_btn)
         btns.addWidget(self.save_btn)
@@ -379,6 +445,7 @@ class ControlScreen(QWidget):
         self.refresh()
 
     def leave(self) -> None:
+        self._release_free_limits(self._current)
         self._active = False
         self._sync_stream()
 
@@ -392,8 +459,8 @@ class ControlScreen(QWidget):
         if self._streaming:
             video.release(self._streaming)
             self._streaming = None
-        self.preview.clear()
-        self.preview.setText("Немає кадру")
+        self.view.pixmap = None
+        self.view.update()
         self.video_info.clear()
         if want and video.acquire(want):
             self._streaming = want
@@ -405,10 +472,9 @@ class ControlScreen(QWidget):
         sf = video.latest(self._streaming)
         st = video.stats(self._streaming)
         if sf is not None:
-            pix = frame_pixmap(sf.image)
-            self.preview.setPixmap(pix.scaled(self.preview.width(), self.preview.height(),
-                                              Qt.AspectRatioMode.KeepAspectRatio,
-                                              Qt.TransformationMode.SmoothTransformation))
+            self.view.pixmap = frame_pixmap(sf.image)
+            self.view.frame_size = (sf.image.shape[1], sf.image.shape[0])
+            self.view.update()
         if st is not None and not st.connected:
             self.video_info.setText(f"Потік: немає ({st.last_error or 'підключення…'})")
             self.video_info.setStyleSheet(f"color: {BAD}")
@@ -421,8 +487,12 @@ class ControlScreen(QWidget):
             self.video_info.setStyleSheet("" if sf.has_angles else f"color: {WARN}")
 
     def _on_select(self, item: Optional[QListWidgetItem], _prev=None) -> None:
+        self._release_free_limits(self._current)
         self._current = item.data(Qt.ItemDataRole.UserRole) if item else None
         self._sync_stream()
+        if self.calib is not None:
+            self.calib.open_camera(self.service.config(self._current).camera_id if self._current else None)
+            self._overlays_changed()
         self.title.setText(f"Обʼєкти управління / Управління · {self._current}" if self._current else "Обʼєкти управління / Управління")
         self.message.clear()
         self._load_form()
@@ -463,8 +533,7 @@ class ControlScreen(QWidget):
         self.baud.setCurrentIndex(idx if idx >= 0 else self.baud.count() - 1)
         for axis in AXES:
             self.cols[axis].load(getattr(cfg, axis))
-        self.tgt_el.setRange(cfg.tilt.min_deg if cfg.tilt.min_deg is not None else 0.0,
-                             cfg.tilt.max_deg if cfg.tilt.max_deg is not None else 90.0)
+        self._apply_target_range()
 
     # --- оновлення стану ----------------------------------------------------------
     def refresh(self) -> None:
@@ -480,6 +549,8 @@ class ControlScreen(QWidget):
             if st.name == self._current:
                 self._show_status(st)
         self._show_video()
+        if self.calib is not None and self._active and self._current:
+            self.calib.refresh(overlays=self.overlays.isChecked())
 
     def _show_status(self, st: CameraStatus) -> None:
         self.cur_az.setText(f"Азимут: {_fmt(st.azimuth_deg)}")
@@ -491,6 +562,12 @@ class ControlScreen(QWidget):
         ros_error = getattr(self.service.backend, "ros_error", "")
         if not st.link_ok and ros_error and not self.service.config(st.name).demo:
             err = ros_error + " — увімкніть «Демо сервоприводів» або встановіть ROS 2"
+        elif not st.link_ok and not self.service.config(st.name).demo:
+            info = getattr(getattr(self.service.backend, "ros", None), "connection_info", None)
+            if info is not None:                 # rosbridge: з яким Pi і чому немає звʼязку
+                err = "; ".join(t for t in (err, info(st.name)) if t)
+        if self.service.limits_free(st.name):
+            err = "; ".join(t for t in ("⚠ Межі кута знято (виставлення нуля)", err) if t)
         self.error_label.setText(err)
         self.error_label.setVisible(bool(err))
         cfg = self.service.config(st.name)
@@ -499,13 +576,17 @@ class ControlScreen(QWidget):
         learning = self.service.is_learning(st.name)
         for w in self._manual_widgets:
             w.setEnabled(st.link_ok and not learning)
-        for w in (self.scan_btn, self.set_id_btn, self.zero_btn):
+        for w in (self.scan_btn, self.set_id_btn, self.zero_btn, self.free_limits):
             w.setEnabled(st.link_ok)
 
     # --- дії --------------------------------------------------------------------------
-    def _say(self, text: str, error: bool = False) -> None:
+    def _say_color(self, text: str, color: str = "") -> None:
         self.message.setText(text)
-        self.message.setStyleSheet(f"color: {BAD}" if error else "")
+        self.message.setStyleSheet(f"color: {color}" if color else "")
+
+    def _say(self, text: str, error: bool = False, warn: bool = False) -> None:
+        self.message.setText(text)
+        self.message.setStyleSheet(f"color: {BAD}" if error else (f"color: {WARN}; font-weight: 600" if warn else ""))
 
     def _watch(self, future: Future, fn: Callable[[Future], None]) -> None:
         future.add_done_callback(lambda f: self._bridge.done.emit(fn, f))
@@ -513,14 +594,15 @@ class ControlScreen(QWidget):
     def _on_go(self) -> None:
         if not self._current:
             return
+        note = self.service.limit_note(self._current, self.tgt_az.value(), self.tgt_el.value())
         try:
             az, el = self.service.go_to(self._current, self.tgt_az.value(), self.tgt_el.value(),
                                         self.speed.value())
         except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
             return
-        if abs(el - self.tgt_el.value()) > 1e-6 or abs((az - self.tgt_az.value() + 180) % 360 - 180) > 1e-6:
-            self._say(f"Ціль обмежено межами камери: азимут {az:.1f}°, кут місця {el:.1f}°")
+        if note:
+            self._say(f"{note}. Ціль обмежено: азимут {az:.1f}°, кут місця {el:.1f}°", warn=True)
         else:
             self._say(f"Перехід до азимуту {az:.1f}°, кута місця {el:.1f}°")
 
@@ -529,9 +611,14 @@ class ControlScreen(QWidget):
             return
         step = self.step.value()
         try:
-            self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
+            note = self.service.jog(self._current, d_az * step, d_el * step, self.speed.value())
         except (ManualControlLocked, RuntimeError) as e:
             self._say(str(e), error=True)
+            return
+        if note:
+            self._say(note, warn=True)
+        elif self.message.text().startswith(("Досягнуто межі", "Кінець ходу")):
+            self._say("")
 
     def _on_stop(self) -> None:
         if self._current:
@@ -609,7 +696,55 @@ class ControlScreen(QWidget):
                 self._say(f"ID не змінено: {e}", error=True)
         self._watch(self.service.set_servo_id(self._current, old, new), report)
 
-    def _on_zero(self, axes) -> None:
+    def _on_free_limits(self, on: bool) -> None:
+        if getattr(self, "_loading_free", False) or not self._current:
+            return
+        name = self._current
+
+        def report(f: Future):
+            try:
+                ok, msg = f.result()
+                if not ok:
+                    self._say(f"Pi не прийняв: {msg}", error=True)
+            except Exception as e:  # noqa: BLE001
+                self._say(f"Не надіслано на Pi: {e}", error=True)
+        self._watch(self.service.free_limits(name, on), report)
+        self._apply_target_range()
+        if on:
+            self._say("Межі кута знято: камера може дійти до механічного упору — повертайте малим кроком. "
+                      "Наведіть на горизонт / нуль азимуту і натисніть «Встановити нуль».", warn=True)
+        else:
+            self._say("Межі кута повернуто.")
+
+    def _release_free_limits(self, name: Optional[str]) -> None:
+        """Вихід з екрана або інша камера — межі повертаються."""
+        if name and self.service.limits_free(name):
+            self.service.free_limits(name, False)
+        self._loading_free = True
+        self.free_limits.setChecked(False)
+        self._loading_free = False
+
+    def _apply_target_range(self) -> None:
+        if not self._current:
+            return
+        tilt = self.service.effective_config(self._current).tilt
+        self.tgt_el.setRange(tilt.min_deg if tilt.min_deg is not None else 0.0,
+                             tilt.max_deg if tilt.max_deg is not None else 90.0)
+
+    def confirm(self, text: str) -> bool:
+        from PyQt6.QtWidgets import QMessageBox
+        return QMessageBox.question(self, "Середина ходу сервопривода", text) == QMessageBox.StandardButton.Yes
+
+    def _on_recenter(self) -> None:
+        if not self._current:
+            return
+        if not self.confirm("Поточне положення вертикального сервопривода стане серединою його ходу (180°) і "
+                            "нулем кута місця. Наведіть камеру точно на горизонт перед цим.\n\n"
+                            "На мить (≈0,2 с) момент вимкнеться — камера може трохи просісти. Продовжити?"):
+            return
+        self._on_zero(("tilt",), recenter=True)
+
+    def _on_zero(self, axes, recenter: bool = False) -> None:
         if not self._current:
             return
         name = self._current
@@ -617,9 +752,12 @@ class ControlScreen(QWidget):
             def report(f: Future, axis=axis):
                 try:
                     value = f.result()
-                    self._say(f"Нуль {AXIS_TITLE[axis].split()[0].lower()} осі: зміщення {value:.2f}°, збережено")
+                    what = "середину ходу сервопривода і нуль" if recenter else "нуль"
+                    self._say(f"{AXIS_TITLE[axis].split()[0]} вісь: {what} встановлено, зміщення нуля {value:.2f}°, "
+                              "збережено")
                     if name == self._current:
                         self.cols[axis].zero.setValue(value)
+                        self._apply_target_range()
                 except Exception as e:  # noqa: BLE001
                     self._say(f"Нуль не встановлено: {e}", error=True)
-            self._watch(self.service.set_zero(name, axis), report)
+            self._watch(self.service.set_zero(name, axis, recenter), report)

@@ -40,7 +40,8 @@ class ControlBackend(abc.ABC):
     def scan(self, name: str, first_id: int = 1, last_id: int = 253) -> "Future[List[int]]": ...
 
     @abc.abstractmethod
-    def set_zero(self, name: str, axis: str) -> "Future[float]": ...
+    def set_zero(self, name: str, axis: str, recenter: bool = False) -> "Future[float]":
+        """recenter — спершу перенести середину ходу сервопривода в поточне положення."""
 
     @abc.abstractmethod
     def set_servo_id(self, name: str, old_id: int, new_id: int) -> "Future[Tuple[bool, str]]": ...

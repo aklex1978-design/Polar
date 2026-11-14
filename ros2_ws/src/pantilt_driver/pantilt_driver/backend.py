@@ -45,6 +45,10 @@ class ServoBackend(abc.ABC):
         """Змінити ID сервопривода (на шині має бути лише один сервопривід з old_id)."""
         raise NotImplementedError
 
+    def recenter(self, servo_id: int) -> float:
+        """Поточне положення вала стає серединою ходу (180°). Повертає новий кут вала."""
+        raise NotImplementedError
+
     def close(self) -> None:  # noqa: B027 — необов'язковий метод
         pass
 
@@ -130,6 +134,14 @@ class SimBackend(ServoBackend):
         s = self.servos[servo_id]
         s.raw_deg -= turns * 360.0
         s.goal_deg -= turns * 360.0
+
+    def recenter(self, servo_id: int) -> float:
+        self._advance()
+        s = self._live(servo_id)
+        if s is None:
+            raise IOError(f"сервопривід {servo_id} не відповідає")
+        s.raw_deg = s.goal_deg = 180.0
+        return s.raw_deg
 
     def set_id(self, old_id: int, new_id: int) -> None:
         if old_id not in self.servos:

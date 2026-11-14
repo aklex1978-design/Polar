@@ -123,9 +123,10 @@ class PanTiltNode(Node):
 
     def _on_set_zero(self, req, resp):
         try:
-            resp.zero_offset_deg = self.ctrl.zero_here(req.axis)
-            resp.success, resp.message = True, "нуль встановлено"
-        except (ValueError, OSError) as e:
+            recenter = bool(getattr(req, "recenter", False))
+            resp.zero_offset_deg = self.ctrl.zero_here(req.axis, recenter=recenter)
+            resp.success, resp.message = True, ("середину ходу і нуль встановлено" if recenter else "нуль встановлено")
+        except (ValueError, OSError, NotImplementedError) as e:
             resp.success, resp.message = False, str(e)
         return resp
 

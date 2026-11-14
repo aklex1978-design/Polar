@@ -134,8 +134,8 @@ class SimControlBackend(ControlBackend):
     def scan(self, name, first_id=1, last_id=253) -> Future:
         return self._call(name, lambda c: c.bus.scan(range(first_id, last_id + 1)))
 
-    def set_zero(self, name, axis) -> Future:
-        return self._call(name, lambda c: c.ctrl.zero_here(axis))
+    def set_zero(self, name, axis, recenter=False) -> Future:
+        return self._call(name, lambda c: c.ctrl.zero_here(axis, recenter=recenter))
 
     def set_servo_id(self, name, old_id, new_id) -> Future:
         def run(c):

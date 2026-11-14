@@ -75,6 +75,9 @@ def test_add_camera_validation_and_save(win):
     f.widgets["address"].setText("rtsp://admin:1@cam/x")
     assert "окремих полях" in f.errors["address"].text()
     f.widgets["address"].setText("rtsp://10.0.0.14/stream1")
+    f.widgets["pi_host"].setText("не адреса!")
+    assert "IP-адреса" in f.errors["pi_host"].text()
+    f.widgets["pi_host"].setText("polar-camera-4.local")
     f.widgets["login"].setText("admin")
     f.widgets["password"].setText("секрет")
     f.widgets["stream_res_x"].setText("640")
@@ -86,6 +89,7 @@ def test_add_camera_validation_and_save(win):
     new = [r for r in recs if r.name == "Камера 4"][0]
     assert new.latitude == pytest.approx(50.46) and new.has_password
     assert new.model == "демо" and new.model_id is not None and new.fov_x_deg == 60
+    assert new.pi_host == "polar-camera-4.local"
     assert cm.stream_password(win.ctx.conn, win.ctx.box, new.id) == "секрет"
     assert "Камера 4" in win.control._items                  # з'явилась і в «Управлінні»
     assert wait(6, lambda: win.ctx.video.stats("Камера 4") and win.ctx.video.stats("Камера 4").frames > 3)
@@ -261,7 +265,7 @@ def test_streams_follow_screens(win):
     win.stack.setCurrentWidget(win.control)                        # вхід в «Управління»
     c = win.control
     assert v.is_running(c._current)
-    assert wait(6, lambda: not c.preview.pixmap().isNull()), c.video_info.text()
+    assert wait(6, lambda: c.view.pixmap is not None), c.video_info.text()
     assert wait(3, lambda: "кадрів/с" in c.video_info.text()), c.video_info.text()
     first = c._current
     c.select_camera("Камера 3")                                    # інша камера — інший потік
@@ -298,60 +302,74 @@ def test_form_sections_collapse_and_buttons_visible(win):
 
 
 def test_calibration_screen(win):
+    """«Калібрування» в рядку списку відкриває «Управління» на вкладці «Калібрування» з накладками на кадрі."""
     from polar_core import calibration as cal
 
     rec = win.ctx.records()[0]
     win.cameras.table.cellWidget(0, 2).click()                    # «Калібрування» в рядку камери
-    c = win.calibration
-    assert win.stack.currentWidget() is c and win.ctx.video.is_running(rec.name)
-    assert wait(6, lambda: c.view.pixmap is not None and c._img_size is not None)
-    assert wait(4, lambda: c.panorama.outline is not None)        # кути датчика є — фігура на панорамі
-    w, h = c._img_size
-    m = c.model()
+    c = win.control
+    p = c.calib
+    assert win.stack.currentWidget() is c and c._current == rec.name and win.ctx.video.is_running(rec.name)
+    assert c.tabs.currentIndex() == c.calib_index and c.overlays.isChecked() and c.view.interactive
+    assert wait(6, lambda: c.view.pixmap is not None and p._img_size is not None)
+    assert wait(4, lambda: p.panorama.outline is not None)        # кути датчика є — фігура на панорамі
+    w, h = p._img_size
+    m = p.model()
     assert (m.cx, m.cy) == (w / 2, h / 2)
-    assert any("Кут датчика" in line for line in c.view.text_lines)
+    assert wait(2, lambda: any("Кут датчика" in line for line in c.view.text_lines))
     # перетягнути центр і зберегти
     c.view.center_moved.emit(w / 2 + 12, h / 2 - 6)
-    c.save_center_btn.click()
+    p.save_center_btn.click()
     saved = cal.load(win.ctx.conn, rec.id)
     assert (saved.center_x, saved.center_y, saved.frame_w) == (w / 2 + 12, h / 2 - 6, w)
-    c.reset_center_btn.click()
-    assert c.model().cx == w / 2
-    # орієнтир з двох положень камери → похибка розміщення
-    c.landmark_btn.setChecked(True)
+    assert "Центр збережено" in c.message.text()
+    p.reset_center_btn.click()
+    assert p.model().cx == w / 2
+    # орієнтир з двох положень камери → похибка розміщення; поворот — кнопками «Управління»
+    p.landmark_btn.setChecked(True)
+    assert c.view.landmark_mode
     assert wait(3, lambda: win.ctx.video.latest(rec.name).has_angles)
     wait(0.3)
     sf = win.ctx.video.latest(rec.name)
-    target = c.model().pixel_to_angles(w * 0.7, h * 0.4, sf.angles.azimuth_deg, sf.angles.elevation_deg)
-    u, v, _ok = c.model().angles_to_pixel(*target, sf.angles.azimuth_deg, sf.angles.elevation_deg)
+    target = p.model().pixel_to_angles(w * 0.7, h * 0.4, sf.angles.azimuth_deg, sf.angles.elevation_deg)
+    u, v, _ok = p.model().angles_to_pixel(*target, sf.angles.azimuth_deg, sf.angles.elevation_deg)
     c.view.clicked.emit(u, v)
-    c._jog(-1, 0)                                                   # повернути на 10°
+    c.step.setValue(10.0)
+    c.btn_left.click()                                              # повернути на 10°
     assert wait(4, lambda: abs(((win.ctx.video.latest(rec.name).angles.azimuth_deg - sf.angles.azimuth_deg)
                                  + 180) % 360 - 180) > 9.5 and not win.ctx.video.latest(rec.name).angles.moving)
     wait(0.4)
     sf2 = win.ctx.video.latest(rec.name)
-    u2, v2, ok2 = c.model().angles_to_pixel(*target, sf2.angles.azimuth_deg, sf2.angles.elevation_deg)
+    u2, v2, ok2 = p.model().angles_to_pixel(*target, sf2.angles.azimuth_deg, sf2.angles.elevation_deg)
     assert ok2
     c.view.clicked.emit(u2, v2)
-    assert c.check.error() is not None and c.check.error() < 0.5
-    assert "в межах" in c.error_label.text()
-    c.save_error_btn.click()
-    assert cal.load(win.ctx.conn, rec.id).placement_error_deg == pytest.approx(c.check.error())
-    c.close_btn.click()
-    assert win.stack.currentWidget() is win.cameras and not win.ctx.video.is_running(rec.name)
+    assert p.check.error() is not None and p.check.error() < 0.5
+    assert "в межах" in p.error_label.text()
+    p.save_error_btn.click()
+    assert cal.load(win.ctx.conn, rec.id).placement_error_deg == pytest.approx(p.check.error())
+    # без накладок — лише кадр; на вкладці «Сервоприводи» центр не перетягується
+    c.tabs.setCurrentIndex(0)
+    assert not c.view.interactive
+    c.overlays.setChecked(False)
+    wait(0.3)
+    assert c.view.model is None and c.view.text_lines == []
+    win.show_cameras()
+    assert not win.ctx.video.is_running(rec.name)
 
 
 def test_calibration_tilt_field(win):
     rec = win.ctx.records()[1]
     win.calibrate_camera(rec.id)
-    c = win.calibration
-    assert c.tilt.value() == rec.tilt_deg and not c.save_tilt_btn.isEnabled()
-    c.tilt.setValue(4.25)
-    assert c.model().tilt_deg == 4.25 and c.save_tilt_btn.isEnabled()
+    c = win.control
+    p = c.calib
+    assert c._current == rec.name
+    assert p.tilt.value() == rec.tilt_deg and not p.save_tilt_btn.isEnabled()
+    p.tilt.setValue(4.25)
+    assert p.model().tilt_deg == 4.25 and p.save_tilt_btn.isEnabled()
     assert wait(2, lambda: any("(не збережено)" in line for line in c.view.text_lines))
     assert win.ctx.camera(rec.id).tilt_deg == rec.tilt_deg              # ще не записано
-    c.save_tilt_btn.click()
-    assert win.ctx.camera(rec.id).tilt_deg == 4.25 and not c.save_tilt_btn.isEnabled()
+    p.save_tilt_btn.click()
+    assert win.ctx.camera(rec.id).tilt_deg == 4.25 and not p.save_tilt_btn.isEnabled()
     assert "збережено" in c.message.text()
     win.edit_camera(rec.id)
     assert win.form.widgets["tilt_deg"].value() == 4.25                 # те саме поле, що в «Редагуванні»
@@ -376,7 +394,8 @@ def test_mask_editor_and_manual_input(win):
 
     rec = win.ctx.records()[0]
     win.calibrate_camera(rec.id)
-    c = win.calibration
+    c = win.control.calib
+    win.control.tabs.setCurrentIndex(win.control.pano_index)            # «Панорама і маска»
     assert "Панорами ще немає" in c.pano_label.text() or wait(1)
     c.zone_btn.setChecked(True)
     assert c.zone_bar.isVisible()
@@ -415,7 +434,7 @@ def test_mask_editor_and_manual_input(win):
     c.refresh()
     assert c.panorama.azimuth == pytest.approx((200.0 + rec.north_offset_deg) % 360)
     c.manual_save.click()
-    assert "записано" in c.message.text()
+    assert "записано" in win.control.message.text()
     assert wait(2, lambda: c.panorama.pixmap is not None and "покриття" in c.pano_label.text())
 
 
@@ -811,12 +830,17 @@ def test_detection_and_ros_settings_screens(win):
     win.stack.setCurrentWidget(win.ros_settings)
     r = win.ros_settings
     assert r.prefix.text() == "/polar" and r.rmw.currentData() == "rmw_fastrtps_cpp"
+    assert r.transport.currentData() == "rosbridge" and r.bridge_port.value() == 9090
+    assert not r.domain.isEnabled() and r.bridge_port.isEnabled()          # параметри DDS — лише для DDS
+    r.transport.setCurrentIndex(r.transport.findData("dds"))
+    assert r.domain.isEnabled() and not r.bridge_port.isEnabled()
     r.rate.setValue(10.0)
     r.save_btn.click()
     assert "Збережено" in r.message.text() and win.ctx.control.ros.state_rate_hz == 10.0
     r.domain.setValue(7)
     r.save_btn.click()
     assert "Перезапустіть програму" in r.message.text()
+    assert win.ctx.settings.ros().transport == "dds"
     r.discovery_mode.setCurrentIndex(1)
     r.discovery.setText("без порту")
     r.save_btn.click()
@@ -846,3 +870,42 @@ def test_events_screen_status_bar_and_error_dialog(win, tmp_path):
     wait(0.2)
     assert win.last_error_box.text() == "RuntimeError: тест" and "polar.log" in win.last_error_box.informativeText()
     win.last_error_box.close()
+
+
+def test_inactive_object_is_excluded(win):
+    """«Активна» = ні: камера лишається у списку, але не підключається і не показується в керуванні й роботі."""
+    rec = win.ctx.records()[2]
+    win.edit_camera(rec.id)
+    f = win.form
+    assert f.widgets["active"].isChecked()
+    f.widgets["active"].setChecked(False)
+    assert f.save()
+    assert not win.ctx.camera(rec.id).active
+    assert rec.name not in win.control._items                          # «Обʼєкти управління / Управління»
+    assert rec.name not in win.ctx.control.camera_names()
+    assert not win.ctx.video.acquire(rec.name) and not win.ctx.video.is_running(rec.name)
+    win.stack.setCurrentWidget(win.grid)                                # «Робота / Обʼєкти управління»
+    assert rec.name not in win.grid.tiles and len(win.grid.tiles) == 2
+    win.show_cameras()
+    t = win.cameras.table
+    assert t.item(2, 0).text() == f"{rec.name} · неактивна" and not t.cellWidget(2, 2).isEnabled()
+    win.edit_camera(rec.id)                                             # увімкнути знову
+    f.widgets["active"].setChecked(True)
+    assert f.save()
+    assert rec.name in win.control._items
+
+
+def test_free_limits_checkbox_released_on_leave(win):
+    """«Зняти межі кута»: діє лише поки камера вибрана в «Управлінні»; інша камера або вихід — межі повертаються."""
+    win.stack.setCurrentWidget(win.control)
+    c = win.control
+    first = c._current
+    assert wait(5, lambda: c.free_limits.isEnabled())
+    c.free_limits.setChecked(True)
+    assert win.ctx.control.limits_free(first) and "Межі кута знято" in c.message.text()
+    assert wait(2, lambda: "Межі кута знято" in c.error_label.text())
+    c.select_camera("Камера 2")
+    assert not win.ctx.control.limits_free(first) and not c.free_limits.isChecked()
+    c.free_limits.setChecked(True)
+    win.show_cameras()
+    assert not win.ctx.control.limits_free("Камера 2")

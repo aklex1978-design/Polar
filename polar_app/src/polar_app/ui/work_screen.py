@@ -111,7 +111,7 @@ class WorkScreen(QWidget):
 
     def refresh_targets(self) -> None:
         det = self.ctx.detection
-        rows = det.targets.rows() if det.active else [{"camera": r.name} for r in self.ctx.records()]
+        rows = det.targets.rows() if det.active else [{"camera": r.name} for r in self.ctx.active_records()]
         self.targets.setRowCount(len(rows))
         for i, row in enumerate(rows):
             t = row.get("time")
@@ -130,7 +130,7 @@ class WorkScreen(QWidget):
     def refresh(self) -> None:
         self.refresh_targets()
         learning, det = self.ctx.learning, self.ctx.detection
-        recs = self.ctx.records()
+        recs = self.ctx.active_records()
         self.table.setRowCount(len(recs))
         running = learning.running()
         for r, rec in enumerate(recs):

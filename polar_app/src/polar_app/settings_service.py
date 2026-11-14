@@ -22,7 +22,7 @@ from polar_core.detection import DetectionSettings, load_settings, save_settings
 
 from . import app_config
 
-RESTART_FIELDS = ("domain_id", "rmw", "interface", "discovery_server", "sros_enabled", "sros_keystore")
+RESTART_FIELDS = ("transport", "bridge_port", "domain_id", "rmw", "interface", "discovery_server", "sros_enabled", "sros_keystore")
 
 
 class SettingsService:

@@ -119,8 +119,13 @@ class VideoService:
 
     # --- потоки -------------------------------------------------------------------
     def records(self):
+        """Усі камери (і неактивні) — для списку, форми, журналу."""
         with self._db_lock:
             return cm.list_cameras(self.conn)
+
+    def active_records(self):
+        """Активні камери — лише вони підключаються й беруть участь у роботі."""
+        return [r for r in self.records() if r.active]
 
     # Потік камери відкривається, лише коли його показує якийсь екран (acquire), і закривається,
     # коли жоден екран його не показує (release): пристрій звільняється, мережа не завантажується.
@@ -130,7 +135,7 @@ class VideoService:
             self._users[name] = self._users.get(name, 0) + 1
             running = name in self._pipes
         if not running:
-            rec = next((r for r in self.records() if r.name == name), None)
+            rec = next((r for r in self.active_records() if r.name == name), None)
             if rec is None:
                 self.release(name)
                 return False
@@ -152,7 +157,7 @@ class VideoService:
 
     def start(self) -> None:
         """Підключити потоки всіх камер з бази (для режимів, яким потрібні всі камери одночасно)."""
-        recs = {r.name: r for r in self.records()}
+        recs = {r.name: r for r in self.active_records()}
         for name in list(self._pipes):
             if name not in recs:
                 self.stop_camera(name)
@@ -169,6 +174,10 @@ class VideoService:
     def restart(self, rec: CameraRecord, old_name: Optional[str] = None) -> None:
         """Параметри камери змінено: перепідключити потік, якщо його зараз показують."""
         old_name = old_name or rec.name
+        if not rec.active:                               # обʼєкт вимкнено — потік закрити
+            self.stop_camera(old_name)
+            self.stop_camera(rec.name)
+            return
         running = old_name in self._pipes
         if old_name != rec.name:
             self.stop_camera(old_name)

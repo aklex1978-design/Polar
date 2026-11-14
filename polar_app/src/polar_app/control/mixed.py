@@ -1,5 +1,5 @@
 """Канал до камер з демо окремо для кожної камери: камери з увімкненим «Демо сервоприводів»
-керуються імітатором, решта — через ROS 2 (справжні Raspberry Pi)."""
+керуються імітатором, решта — справжні Raspberry Pi через rosbridge (за замовчуванням) або ROS 2 DDS."""
 from __future__ import annotations
 
 from concurrent.futures import Future
@@ -11,7 +11,12 @@ from .base import ControlBackend, failed
 from .sim import SimControlBackend
 
 
-def _default_ros():
+def _default_ros(ros: Optional[RosSettings] = None) -> ControlBackend:
+    """Канал до справжніх Pi за налаштуванням «Налаштування → ROS 2 → Звʼязок з Pi»."""
+    if ros is None or ros.transport == "rosbridge":
+        from .rosbridge import RosbridgeControlBackend
+
+        return RosbridgeControlBackend()
     from .ros import RosControlBackend
 
     return RosControlBackend()
@@ -37,7 +42,8 @@ class MixedControlBackend(ControlBackend):
         real = [c for c in cams if not c.demo]
         if real and self.ros is None and not self.ros_error:
             try:
-                self.ros = self._ros_factory()
+                self.ros = (self._ros_factory(ros) if self._ros_factory is _default_ros
+                            else self._ros_factory())
                 self.ros.add_state_listener(self._emit)
             except Exception as e:  # noqa: BLE001 — rclpy або polar_interfaces не встановлено
                 self.ros_error = f"ROS 2 недоступний: {e}"
@@ -75,8 +81,8 @@ class MixedControlBackend(ControlBackend):
     def scan(self, name, first_id=1, last_id=253) -> Future:
         return self._call(name, "scan", name, first_id, last_id)
 
-    def set_zero(self, name, axis) -> Future:
-        return self._call(name, "set_zero", name, axis)
+    def set_zero(self, name, axis, recenter=False) -> Future:
+        return self._call(name, "set_zero", name, axis, recenter)
 
     def set_servo_id(self, name, old_id, new_id) -> Future:
         return self._call(name, "set_servo_id", name, old_id, new_id)
