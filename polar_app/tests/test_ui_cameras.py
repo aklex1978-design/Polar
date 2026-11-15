@@ -956,6 +956,11 @@ def test_panorama_azimuth_limits_and_cardinals(win):
     mid_blocked = pv._pt((hi + 90) % 360, 45)                                       # недоступна частина
     mid_free = pv._pt((lo + hi) / 2, 45)
     assert QtGui_lightness(img, mid_blocked) < QtGui_lightness(img, mid_free) or pv.pixmap is None
+    # «Сх» — білі літери на темній плашці вгорі панорами, над 90°
+    x90, top = int(pv._pt(90, 0).x()), int(pv._area().top())
+    bright = max(img.pixelColor(x, y).lightness() for x in range(x90 - 8, x90 + 9) for y in range(top + 3, top + 18))
+    dark = min(img.pixelColor(x, y).lightness() for x in range(x90 - 8, x90 + 9) for y in range(top + 3, top + 18))
+    assert bright > 200 and dark < 60, (bright, dark)
     win.stack.setCurrentWidget(win.grid)                                            # і на панорамі в «Роботі»
     assert wait(3, lambda: win.grid.tiles[rec.name].panorama.az_limits == pv.az_limits)
 

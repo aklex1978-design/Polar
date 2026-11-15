@@ -114,6 +114,27 @@ class CameraView(QWidget):
         self.center_moved.emit(u, v)
 
     # --- малювання ------------------------------------------------------------------------
+    def _paint_cardinals(self, p: QPainter, font: QFont) -> None:
+        """Сторони світу вгорі панорами: білі жирні літери на темній плашці — видно на будь-якому фоні."""
+        a = self._area()
+        bold = QFont(font)
+        bold.setBold(True)
+        bold.setPointSizeF(font.pointSizeF() + 1)
+        p.setFont(bold)
+        fm = p.fontMetrics()
+        for az, text in CARDINALS:
+            w, h = fm.horizontalAdvance(text) + 8, fm.height() + 2
+            x = self._pt(az, 0).x() - w / 2
+            x = min(max(x, a.left() + 1), a.right() - w - 1)     # Пн на краях — всередині панорами
+            box = QRectF(x, a.top() + 2, w, h)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 170))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(CARDINAL_COLOR)
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setFont(font)
+
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -333,17 +354,8 @@ class PanoramaView(QWidget):
         cardinal = dict(CARDINALS)
         for az in range(0, 361, 30):
             x = self._pt(az, 0).x()
-            if az in cardinal:                               # сторона світу: яскравіша лінія і підпис
-                p.setPen(QPen(QColor(255, 255, 255, 90), 1))
-                p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
-                bold = QFont(font)
-                bold.setBold(True)
-                p.setFont(bold)
-                p.setPen(CARDINAL_COLOR)
-                p.drawText(QPointF(x - 12, a.bottom() + 14), f"{cardinal[az]} {az % 360}°")
-                p.setFont(font)
-                continue
-            p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+            # сторона світу — яскравіша лінія; підпис (Пн, Сх …) — всередині панорами, див. _paint_cardinals
+            p.setPen(QPen(QColor(255, 255, 255, 90 if az in cardinal else 40), 1))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
             p.setPen(QColor(QUIET))
             p.drawText(QPointF(x - 8, a.bottom() + 14), f"{az}°")
@@ -356,6 +368,7 @@ class PanoramaView(QWidget):
         p.setClipRect(a)
         self._paint_mask(p)
         self._paint_az_limits(p)
+        self._paint_cardinals(p, font)
         if self.outline is not None and len(self.outline):
             pts = self.outline.copy()
             pts[:, 1] = np.minimum(pts[:, 1], 90.0)         # вище 90° — обрізається
@@ -367,7 +380,7 @@ class PanoramaView(QWidget):
             x = self._pt(self.azimuth, 0).x()
             p.setPen(QPen(QColor("#64d2ff"), 1, Qt.PenStyle.DashLine))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
-            p.drawText(QPointF(min(x + 4, a.right() - 48), a.top() + 12), f"{self.azimuth:.1f}°")
+            p.drawText(QPointF(min(x + 4, a.right() - 48), a.top() + 30), f"{self.azimuth:.1f}°")
         if self.center is not None:
             c = self._pt(*self.center)
             p.setPen(QPen(CENTER_COLOR, 2))
