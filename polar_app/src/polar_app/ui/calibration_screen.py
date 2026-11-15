@@ -131,7 +131,7 @@ class CameraView(QWidget):
             p.setBrush(QColor(0, 0, 0, 170))
             p.drawRoundedRect(box, 3, 3)
             p.setPen(CARDINAL_COLOR)
-            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
+            p.drawText(QPointF(x + 4, a.top() + 3 + fm.ascent()), text)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setFont(font)
 
