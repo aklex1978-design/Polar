@@ -114,27 +114,6 @@ class CameraView(QWidget):
         self.center_moved.emit(u, v)
 
     # --- малювання ------------------------------------------------------------------------
-    def _paint_cardinals(self, p: QPainter, font: QFont) -> None:
-        """Сторони світу вгорі панорами: білі жирні літери на темній плашці — видно на будь-якому фоні."""
-        a = self._area()
-        bold = QFont(font)
-        bold.setBold(True)
-        bold.setPointSizeF(font.pointSizeF() + 1)
-        p.setFont(bold)
-        fm = p.fontMetrics()
-        for az, text in CARDINALS:
-            w, h = fm.horizontalAdvance(text) + 8, fm.height() + 2
-            x = self._pt(az, 0).x() - w / 2
-            x = min(max(x, a.left() + 1), a.right() - w - 1)     # Пн на краях — всередині панорами
-            box = QRectF(x, a.top() + 2, w, h)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(0, 0, 0, 170))
-            p.drawRoundedRect(box, 3, 3)
-            p.setPen(CARDINAL_COLOR)
-            p.drawText(QPointF(x + 4, a.top() + 3 + fm.ascent()), text)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setFont(font)
-
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -339,6 +318,27 @@ class PanoramaView(QWidget):
             p.setPen(QPen(LIMIT_COLOR, 2))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
             p.drawText(QPointF(min(x + 4, a.right() - 70), a.bottom() - 6), f"{text} {az:.0f}°")
+
+    def _paint_cardinals(self, p: QPainter, font: QFont) -> None:
+        """Сторони світу вгорі панорами: білі жирні літери на темній плашці — видно на будь-якому фоні."""
+        a = self._area()
+        bold = QFont(font)
+        bold.setBold(True)
+        bold.setPointSizeF(font.pointSizeF() + 1)
+        p.setFont(bold)
+        fm = p.fontMetrics()
+        for az, text in CARDINALS:
+            w, h = fm.horizontalAdvance(text) + 8, fm.height() + 2
+            x = self._pt(az, 0).x() - w / 2
+            x = min(max(x, a.left() + 1), a.right() - w - 1)     # Пн на краях — всередині панорами
+            box = QRectF(x, a.top() + 2, w, h)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 170))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(CARDINAL_COLOR)
+            p.drawText(QPointF(x + 4, a.top() + 3 + fm.ascent()), text)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setFont(font)
 
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
