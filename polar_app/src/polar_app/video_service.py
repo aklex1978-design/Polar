@@ -472,15 +472,21 @@ class VideoService:
                     est.add_frame(img, t)
                 enc = [s for s in pipe.history.samples() if t_start - 1.5 <= s.t <= t_end]
                 lag_s, quality = est.estimate(enc)
+
+                def rates_at(lag):
+                    moving = []
+                    for _img, t in frames:
+                        a = pipe.history.at(t - lag)
+                        moving.append(bool(a and a.moving))
+                    return update_rate(frames, moving)
                 if quality < 0.6:
-                    raise ValueError(f"ненадійний результат (кореляція {quality:.2f}) — "
-                                     "спрямуйте камеру на ділянку з деталями і повторіть")
+                    rates = rates_at(rec.video_latency_ms / 1000.0)          # частоту оновлення — все одно
+                    tail = (f" Потік: {rates[0]:.0f} кадрів/с; камера оновлює зображення: {rates[1]:.0f} разів/с."
+                            if rates else "")
+                    raise ValueError(f"ненадійний результат (кореляція {quality:.2f}) — спрямуйте камеру на "
+                                     f"ділянку з деталями (теплові контрасти для тепловізора) і повторіть.{tail}")
                 ms = int(round(lag_s * 1000))
-                moving = []
-                for _img, t in frames:
-                    a = pipe.history.at(t - lag_s)
-                    moving.append(bool(a and a.moving))
-                rates = update_rate(frames, moving)
+                rates = rates_at(lag_s)
                 if save and rec.id:
                     with self._db_lock:
                         with self.conn:

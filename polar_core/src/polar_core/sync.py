@@ -115,19 +115,23 @@ class LatencyEstimator:
     """Затримка відео відносно енкодерів за рухом камери.
 
     Під час повороту камери (краще кілька поворотів туди й назад) збираємо:
-    * зсув зображення між сусідніми кадрами (фазова кореляція) → кутова швидкість за відео;
-    * кутова швидкість за енкодерами.
-    Затримка — зсув у часі, за якого ці дві швидкості найкраще збігаються.
+    * зсув зображення між сусідніми кадрами (фазова кореляція) → положення камери за відео (сума зсувів);
+    * положення за енкодерами.
+    Обидва положення згладжуються на відрізку smooth_s і перетворюються на кутову швидкість; затримка —
+    зсув у часі, за якого швидкості найкраще збігаються. Згладжування робить метод стійким до повторів
+    кадрів (потік 60 к/с, сенсор оновлюється 30 або 9 разів/с — зсув «0, 0, стрибок»), а нормалізація
+    яскравості кадру — до малоконтрастних сцен (тепловізор на рівну стіну).
     """
 
     def __init__(self, hfov_deg: float, frame_width: int, max_lag_s: float = 1.5, step_s: float = 0.002,
-                 work_width: int = 320) -> None:
+                 work_width: int = 320, smooth_s: float = 0.2) -> None:
         self.deg_per_px = hfov_deg / frame_width
         self.max_lag_s = max_lag_s
         self.step_s = step_s
         self.work_width = work_width
+        self.smooth_s = smooth_s
         self._prev: Optional[Tuple[float, np.ndarray]] = None
-        self.video: List[Tuple[float, float]] = []      # (t середини, °/с)
+        self.video: List[Tuple[float, float]] = []      # (t кадру, положення за відео, °)
 
     def add_frame(self, image: np.ndarray, t: float) -> None:
         import cv2
@@ -136,47 +140,50 @@ class LatencyEstimator:
         scale = self.work_width / g.shape[1]
         g = cv2.resize(g, (self.work_width, max(8, int(round(g.shape[0] * scale)))),
                        interpolation=cv2.INTER_AREA).astype(np.float32)
+        g = (g - g.mean()) / (g.std() + 1e-3)          # однаковий контраст для малоконтрастних сцен
         win = cv2.createHanningWindow((g.shape[1], g.shape[0]), cv2.CV_32F)
-        if self._prev is not None:
+        if self._prev is None:
+            self.video.append((t, 0.0))
+        else:
             t0, g0 = self._prev
             (dx, _dy), _resp = cv2.phaseCorrelate(g0, g, win)
-            dt = t - t0
-            if dt > 0:
-                self.video.append(((t + t0) / 2, -dx / scale * self.deg_per_px / dt))
+            if t > t0:
+                self.video.append((t, self.video[-1][1] - dx / scale * self.deg_per_px))
         self._prev = (t, g)
+
+    def _smooth_rate(self, pos: np.ndarray) -> np.ndarray:
+        k = max(1, int(round(self.smooth_s / self.step_s)))
+        padded = np.concatenate([np.full(k, pos[0]), pos, np.full(k, pos[-1])])
+        sm = np.convolve(padded, np.ones(k) / k, mode="same")[k:-k]
+        return np.gradient(sm, self.step_s)
 
     def estimate(self, encoder: Sequence[AngleSample]) -> Tuple[float, float]:
         """(затримка, с; якість 0..1 — кореляція). ValueError, якщо руху замало."""
         if len(self.video) < 10 or len(encoder) < 10:
             raise ValueError("замало даних: потрібен поворот камери під час запису")
         et = np.array([s.t for s in encoder])
-        ea = np.array([s.azimuth_deg for s in encoder])
+        ea = np.unwrap(np.radians([s.azimuth_deg for s in encoder]))
+        ea = np.degrees(ea)
         vt = np.array([v[0] for v in self.video])
-        vw = np.array([v[1] for v in self.video])
-        t0 = max(et[0], vt[0] - self.max_lag_s)
-        t1 = min(et[-1], vt[-1])
+        vp = np.array([v[1] for v in self.video])
+        t0, t1 = max(et[0], vt[0] - self.max_lag_s), min(et[-1], vt[-1])
         if t1 - t0 < 1.0:
             raise ValueError("замало даних: запис коротший за 1 с")
-        grid = np.arange(t0, vt[-1], self.step_s)
-        pos = np.interp(grid, et, ea)
-        ew = np.gradient(pos, self.step_s)
-        k = max(1, int(0.04 / self.step_s))                   # згладжування на ~кадр
-        ew = np.convolve(ew, np.ones(k) / k, mode="same")
+        grid = np.arange(t0, t1, self.step_s)
+        ew = self._smooth_rate(np.interp(grid, et, ea))
         if np.std(ew) < 1.0:
             raise ValueError("камера майже не рухалась — затримку не виміряти")
-        best = (0.0, -2.0)
+        vgrid = np.arange(vt[0], vt[-1], self.step_s)
+        vw = self._smooth_rate(np.interp(vgrid, vt, vp))
         lags = np.arange(0.0, self.max_lag_s, self.step_s)
         corr = []
         for lag in lags:
-            vgrid = vt - lag                                   # момент руху за енкодерами
-            m = (vgrid >= grid[0]) & (vgrid <= grid[-1])
-            if m.sum() < 8:
+            src = vgrid - lag                                   # момент руху за енкодерами
+            m = (src >= grid[0]) & (src <= grid[-1])
+            if m.sum() < int(1.0 / self.step_s):
                 corr.append(-2.0)
                 continue
-            e = np.interp(vgrid[m], grid, ew)
-            v = vw[m]
-            c = _ncc(e, v)
-            corr.append(abs(c))                                # знак залежить від напрямку осі
+            corr.append(abs(_ncc(np.interp(src[m], grid, ew), vw[m])))   # знак — від напрямку осі
         corr = np.array(corr)
         i = int(np.argmax(corr))
         if 0 < i < len(corr) - 1:                              # уточнення вершини параболою
@@ -185,8 +192,7 @@ class LatencyEstimator:
             frac = 0.5 * (y0 - y2) / den if den else 0.0
         else:
             frac = 0.0
-        best = (float(lags[i] + frac * self.step_s), float(corr[i]))
-        return best
+        return float(lags[i] + frac * self.step_s), float(corr[i])
 
 
 def _ncc(a: np.ndarray, b: np.ndarray) -> float:
