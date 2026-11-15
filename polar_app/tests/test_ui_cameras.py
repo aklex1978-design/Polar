@@ -524,8 +524,18 @@ def test_snapshot_window_follows_camera(win, tmp_path):
     t.btn_down.click()                                            # назад — знову перший знімок
     assert wait(15, lambda: w.path == paths[0])
     assert w.image.pixmap() is not None and not w.image.pixmap().isNull()
-    win.show_cameras()
     w.close()
+    win.stack.setCurrentWidget(win.control)                       # форма камери — знімок поруч із відео
+    win.control.select_camera(name)
+    c = win.control
+    assert wait(5, lambda: c.snapshot.isVisible() and c.snapshot.path == paths[0]), c.snapshot.info.text()
+    assert not c.snapshot.image.pixmap().isNull() and "вузол азимут" in c.snapshot.info.text()
+    c.show_snapshot.setChecked(False)
+    assert not c.snapshot.isVisible() and not c.snapshot.timer.isActive()
+    c.show_snapshot.setChecked(True)
+    assert c.snapshot.isVisible()
+    win.show_cameras()
+    assert not c.snapshot.timer.isActive()
 
 
 def test_work_screen_targets_table(win):

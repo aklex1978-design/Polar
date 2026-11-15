@@ -20,6 +20,7 @@ from polar_core.control import (BAUDRATES, AXES, CameraControlConfig, CameraStat
 
 from .calibration_screen import CalibrationPanel, CameraView
 from .common import BAD, GOOD, WARN, frame_pixmap
+from .snapshot_window import SnapshotPanel
 AXIS_TITLE = {"pan": "Горизонтальний (азимут)", "tilt": "Вертикальний (кут місця)"}
 
 
@@ -218,7 +219,17 @@ class ControlScreen(QWidget):
         self.view = CameraView()
         self.view.interactive = False
         self.view.setMinimumSize(400, 225)
-        vv.addWidget(self.view, 1)
+        # поруч із відео — збережений знімок для поточного азимуту і кута місця (Навчання / «Зберегти»)
+        self.snapshot = SnapshotPanel(self.ctx, compact=True)
+        self.snapshot.timer.stop()
+        self.snapshot.hide()
+        self.video_split = QSplitter(Qt.Orientation.Horizontal)
+        self.video_split.addWidget(self.view)
+        self.video_split.addWidget(self.snapshot)
+        self.video_split.setStretchFactor(0, 1)
+        self.video_split.setStretchFactor(1, 1)
+        self.video_split.setChildrenCollapsible(False)
+        vv.addWidget(self.video_split, 1)
         vrow = QHBoxLayout()
         self.video_info = QLabel("")
         self.video_info.setWordWrap(True)
@@ -227,6 +238,12 @@ class ControlScreen(QWidget):
         self.overlays.setToolTip("Центр камери (перехрестя), кола поля зору, вісь нахилу γ і орієнтири на кадрі")
         self.overlays.toggled.connect(lambda _on: self._overlays_changed())
         vrow.addWidget(self.overlays)
+        self.show_snapshot = QCheckBox("Знімок поруч")
+        self.show_snapshot.setToolTip("Збережений знімок (Навчання або «Зберегти») для поточного азимуту і кута "
+                                      "місця камери — поруч із відео")
+        self.show_snapshot.setChecked(True)
+        self.show_snapshot.toggled.connect(lambda _on: self._sync_snapshot())
+        vrow.addWidget(self.show_snapshot)
         vv.addLayout(vrow)
         v.addWidget(video, 1)
 
@@ -466,6 +483,7 @@ class ControlScreen(QWidget):
         self._sync_stream()
 
     def _sync_stream(self) -> None:
+        self._sync_snapshot()
         video = getattr(self.ctx, "video", None)
         if video is None:
             return
@@ -480,6 +498,16 @@ class ControlScreen(QWidget):
         self.video_info.clear()
         if want and video.acquire(want):
             self._streaming = want
+
+    def _sync_snapshot(self) -> None:
+        """Знімок поруч — лише поки форма відкрита і прапорець увімкнено (опитування 4 рази/с)."""
+        on = self._active and self.show_snapshot.isChecked() and getattr(self.ctx, "learning", None) is not None
+        self.snapshot.setVisible(on)
+        self.snapshot.set_camera(self._current if on else None)
+        if on:
+            self.snapshot.timer.start(250)
+        else:
+            self.snapshot.timer.stop()
 
     def _show_video(self) -> None:
         video = getattr(self.ctx, "video", None)
