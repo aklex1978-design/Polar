@@ -28,6 +28,19 @@ CIRCLE_COLOR = QColor("#ffd60a")
 AXIS_COLOR = QColor("#30d158")
 LANDMARK_COLOR = QColor("#64d2ff")
 MASK_COLOR = QColor("#ff3b30")
+LIMIT_COLOR = QColor("#ff9f0a")
+CARDINAL_COLOR = QColor("#ffffff")
+# сторони світу: на панорамі азимут — від півночі (0° = північ, за годинниковою стрілкою)
+CARDINALS = ((0, "Пн"), (90, "Сх"), (180, "Пд"), (270, "Зх"), (360, "Пн"))
+
+
+def az_limits_north(pan, north_offset_deg: float) -> Optional[Tuple[float, float]]:
+    """Межі азимуту камери (налаштування сервопривода, кут камери) → від півночі (від, до за
+    годинниковою стрілкою). None — без меж (ковзний контакт) або межі на повне коло."""
+    lo, hi = getattr(pan, "min_deg", None), getattr(pan, "max_deg", None)
+    if lo is None or hi is None or hi - lo >= 360.0:
+        return None
+    return wrap360(lo + north_offset_deg), wrap360(hi + north_offset_deg)
 
 
 class CameraView(QWidget):
@@ -200,6 +213,7 @@ class PanoramaView(QWidget):
         self.center: Optional[Tuple[float, float]] = None
         self.azimuth: Optional[float] = None
         self.label = ""
+        self.az_limits: Optional[Tuple[float, float]] = None    # дозволений азимут від півночі: від → до
 
     def heightForWidth(self, w: int) -> int:  # noqa: N802
         return int(w / 4) + 24
@@ -285,6 +299,26 @@ class PanoramaView(QWidget):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(QRectF(self._pt(*self._drag_start), self._pt(*self._drag_now)))
 
+    def _paint_az_limits(self, p: QPainter) -> None:
+        """Межі азимуту камери: недоступна частина затінена, межі — помаранчеві лінії з підписом."""
+        if self.az_limits is None:
+            return
+        a = self._area()
+        lo, hi = self.az_limits
+        # недоступно: від hi до lo за годинниковою стрілкою
+        spans = [(hi, lo)] if hi <= lo else [(hi, 360.0), (0.0, lo)]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 120))
+        for s0, s1 in spans:
+            x0, x1 = self._pt(s0, 0).x(), self._pt(s1, 0).x()
+            p.drawRect(QRectF(x0, a.top(), x1 - x0, a.height()))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for az, text in ((lo, "межа"), (hi, "межа")):
+            x = self._pt(az, 0).x()
+            p.setPen(QPen(LIMIT_COLOR, 2))
+            p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
+            p.drawText(QPointF(min(x + 4, a.right() - 70), a.bottom() - 6), f"{text} {az:.0f}°")
+
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -296,8 +330,19 @@ class PanoramaView(QWidget):
         font = QFont(self.font())
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
         p.setFont(font)
+        cardinal = dict(CARDINALS)
         for az in range(0, 361, 30):
             x = self._pt(az, 0).x()
+            if az in cardinal:                               # сторона світу: яскравіша лінія і підпис
+                p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+                p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
+                bold = QFont(font)
+                bold.setBold(True)
+                p.setFont(bold)
+                p.setPen(CARDINAL_COLOR)
+                p.drawText(QPointF(x - 12, a.bottom() + 14), f"{cardinal[az]} {az % 360}°")
+                p.setFont(font)
+                continue
             p.setPen(QPen(QColor(255, 255, 255, 40), 1))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
             p.setPen(QColor(QUIET))
@@ -310,6 +355,7 @@ class PanoramaView(QWidget):
             p.drawText(QPointF(2, y + 4), f"{el}°")
         p.setClipRect(a)
         self._paint_mask(p)
+        self._paint_az_limits(p)
         if self.outline is not None and len(self.outline):
             pts = self.outline.copy()
             pts[:, 1] = np.minimum(pts[:, 1], 90.0)         # вище 90° — обрізається
@@ -543,6 +589,11 @@ class CalibrationPanel:
         if self.manual_on.isChecked():
             sensor, el = self.m_sensor.value(), self.m_el.value()   # фігура — за введеними кутами
         self._refresh_panorama_image()
+        try:
+            pan = self.ctx.control.config(self.rec.name).pan
+        except KeyError:
+            pan = None
+        self.panorama.az_limits = az_limits_north(pan, self.rec.north_offset_deg)
         if sensor is not None:
             self.panorama.outline = m.frame_outline(sensor, el)
             self.panorama.center = m.center_angles(sensor, el)

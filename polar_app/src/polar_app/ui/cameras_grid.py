@@ -16,7 +16,7 @@ from polar_core import calibration as cal
 from polar_core.angles import wrap360
 from polar_core.control import ManualControlLocked
 
-from .calibration_screen import CameraView, PanoramaView
+from .calibration_screen import CameraView, PanoramaView, az_limits_north
 from .common import BAD, GOOD, frame_pixmap
 from .snapshot_window import SnapshotWindow
 
@@ -196,6 +196,10 @@ class CamerasGridScreen(QWidget):
 
     def _refresh_panorama(self, tile: CameraTile, rec, sf, model) -> None:
         pv = tile.panorama
+        try:
+            pv.az_limits = az_limits_north(self.ctx.control.config(rec.name).pan, rec.north_offset_deg)
+        except KeyError:
+            pv.az_limits = None
         learning = self.ctx.learning
         pano = learning.panorama(rec.name)
         key = (id(pano), learning.version.get(rec.name, 0))

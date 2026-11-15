@@ -94,6 +94,12 @@ pump(0.5)
 win.calibrate_camera(rec0.id)
 pump(2.0)
 win.grab().save(os.path.join(out_dir, "calibration.png"))
+import copy  # noqa: E402
+from polar_core.control import ServoSettings  # noqa: E402
+_cfg = copy.deepcopy(ctx.control.config(rec0.name))
+_cfg.pan = ServoSettings("pan", _cfg.pan.servo_id, min_deg=20.0, max_deg=250.0)   # межі азимуту — на панорамі
+ctx.control.save_config(_cfg)
+pump(0.5)
 win.control.tabs.setCurrentIndex(win.control.pano_index)
 win.control.calib.zone_btn.setChecked(True)
 pump(0.3)

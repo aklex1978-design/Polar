@@ -929,3 +929,36 @@ def test_stage_latency_report(win):
     screen = text.split("Кадр: Polar → екран:")[1].split("<br>")[0]
     assert "Кадр: Pi → Polar:" in text and "мс" in screen and "немає" not in screen, text
     assert "Кути: Pi → Polar:" in text and f.stages_btn.isEnabled()
+
+
+def test_panorama_azimuth_limits_and_cardinals(win):
+    """Межі азимуту камери — на панорамі (від півночі, з урахуванням зміщення нуля); сторони світу."""
+    import copy
+    from polar_app.ui.calibration_screen import CARDINALS, az_limits_north
+    from polar_core.control import ServoSettings
+    assert az_limits_north(ServoSettings("pan", 1, min_deg=10.0, max_deg=200.0), 30.0) == (40.0, 230.0)
+    assert az_limits_north(ServoSettings("pan", 1, min_deg=300.0, max_deg=350.0), 30.0) == (330.0, 20.0)
+    assert az_limits_north(ServoSettings("pan", 1), 30.0) is None                  # ковзний контакт
+    assert az_limits_north(None, 0.0) is None
+    assert dict(CARDINALS)[0] == "Пн" and dict(CARDINALS)[90] == "Сх"
+    rec = win.ctx.records()[1]                                                     # зміщення від півночі 120°
+    cfg = copy.deepcopy(win.ctx.control.config(rec.name))
+    cfg.pan = ServoSettings("pan", cfg.pan.servo_id, min_deg=20.0, max_deg=100.0)
+    win.ctx.control.save_config(cfg)
+    win.calibrate_camera(rec.id)
+    c = win.control
+    c.tabs.setCurrentIndex(c.pano_index)
+    pv = c.calib.panorama
+    pv.resize(1100, 300)
+    assert wait(2, lambda: pv.az_limits == ((20.0 + rec.north_offset_deg) % 360, (100.0 + rec.north_offset_deg) % 360))
+    img = pv.grab().toImage()
+    lo, hi = pv.az_limits
+    mid_blocked = pv._pt((hi + 90) % 360, 45)                                       # недоступна частина
+    mid_free = pv._pt((lo + hi) / 2, 45)
+    assert QtGui_lightness(img, mid_blocked) < QtGui_lightness(img, mid_free) or pv.pixmap is None
+    win.stack.setCurrentWidget(win.grid)                                            # і на панорамі в «Роботі»
+    assert wait(3, lambda: win.grid.tiles[rec.name].panorama.az_limits == pv.az_limits)
+
+
+def QtGui_lightness(img, pt):  # noqa: N802
+    return img.pixelColor(int(pt.x()), int(pt.y())).lightness()
