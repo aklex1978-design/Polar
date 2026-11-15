@@ -71,7 +71,7 @@ class SnapshotPanel(QWidget):
         except ValueError:
             pass
         kind = " · збережено вручну" if entry.get("manual") else ""
-        node = (f"вузол азимут {entry['azimuth_node']:g}°, кут місця {entry['elevation_node']:g}° "
+        node = (f"вузол азимут {entry['azimuth_node']:.1f}°, кут місця {entry['elevation_node']:.1f}° "
                 f"(фактично {entry['azimuth_deg']:.1f}° / {entry['elevation_deg']:.1f}°)")
         if self.compact:
             self.info.setText(f"Знімок: {node} · {when}{kind}")
