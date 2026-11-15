@@ -96,15 +96,19 @@ class ServoSettings:
         """Копія з межами на весь хід вала (0…360° у режимі положення) — для виставлення нуля, коли
         справжнє положення камери лежить за звичайними межами осі. Ковзний контакт — без змін."""
         from dataclasses import replace
-        if self.continuous or self.min_deg is None or self.max_deg is None:
+        if self.axis == "pan":                  # багатообертовий (ковзний контакт) — межі просто знімаються
+            return replace(self, min_deg=None, max_deg=None)
+        if self.min_deg is None or self.max_deg is None:
             return replace(self)
         a = self.direction * (0.0 - self.zero_offset_deg) / self.gear_ratio
         b = self.direction * (360.0 - self.zero_offset_deg) / self.gear_ratio
         return replace(self, min_deg=round(min(a, b), 3), max_deg=round(max(a, b), 3))
 
     def raw_range(self) -> Tuple[Optional[float], Optional[float]]:
-        """Кути вала сервопривода для меж осі (None — без меж, ковзний контакт)."""
-        if self.continuous or self.min_deg is None or self.max_deg is None:
+        """Кути вала вертикального сервопривода для меж осі. Лише кут місця: його ST3020 працює в режимі
+        положення (вал 0…360°); горизонтальний — багатообертовий (ковзний контакт), вал може йти за 360°,
+        тож межі азимуту хід вала не обмежує. (None, None) — не перевіряється."""
+        if self.axis != "tilt" or self.min_deg is None or self.max_deg is None:
             return None, None
         a = self.zero_offset_deg + self.direction * self.min_deg * self.gear_ratio
         b = self.zero_offset_deg + self.direction * self.max_deg * self.gear_ratio

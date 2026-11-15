@@ -126,3 +126,13 @@ def test_freed_limits_cover_full_shaft_travel():
     assert (r.min_deg, r.max_deg) == (-160.0, 200.0)
     cfg = CameraControlConfig(1, "К", "camera_1", tilt=t)
     assert cfg.freed().tilt.min_deg == -30.0 and cfg.freed().pan.min_deg is None and cfg.tilt.min_deg == 0.0
+
+
+def test_pan_limits_with_zero_beyond_one_turn_are_valid():
+    """Горизонтальний ST3020 багатообертовий: нуль ≈ 360° і межі 1…181° (вал 361…541°) — допустимо;
+    «Зняти межі» для азимуту — просто без меж."""
+    from polar_core.control import ServoSettings
+    pan = ServoSettings("pan", 1, direction=1, zero_offset_deg=360.0, gear_ratio=1.2, min_deg=1.0, max_deg=181.0)
+    assert pan.validate() == [] and pan.raw_range() == (None, None)
+    f = pan.freed()
+    assert f.min_deg is None and f.max_deg is None and f.continuous and pan.min_deg == 1.0
