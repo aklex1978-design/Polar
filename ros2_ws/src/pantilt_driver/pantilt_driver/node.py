@@ -30,6 +30,23 @@ def write_flag(path: str, on: bool):
     return True, "мітку часу в кадрі " + ("увімкнено — відео перезапускається" if on else "вимкнено")
 
 
+def read_shift(path: str) -> float:
+    """Збережений зсув шкали вала азимуту (°); 0, якщо файлу немає."""
+    try:
+        with open(path, encoding="ascii") as f:
+            return float(f.read().strip() or 0.0)
+    except (OSError, ValueError):
+        return 0.0
+
+
+def write_shift(path: str, value: float) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="ascii") as f:
+        f.write(f"{value:.4f}\n")
+    os.replace(tmp, path)
+
+
 def _servo_config(node: Node, prefix: str, defaults: dict) -> ServoConfig:
     def p(name, value):
         return node.declare_parameter(f"{prefix}.{name}", value).value
@@ -89,7 +106,12 @@ class PanTiltNode(Node):
             pass
         self.baudrate = self.declare_parameter("baudrate", 1_000_000).value
         backend = self._open_backend(backend_name, [pan.servo_id, tilt.servo_id])
-        self.ctrl = PanTiltController(backend, pan, tilt, link_timeout_s=link_timeout_s)
+        # зсув шкали вала азимуту (перенесення середини ходу при русі через край 0/360°) — переживає перезапуск
+        self.pan_shift_file = self.declare_parameter("pan_shift_file", "/var/lib/polar/servo/pan_shift_deg").value
+        self.ctrl = PanTiltController(backend, pan, tilt, link_timeout_s=link_timeout_s,
+                                      pan_shift_deg=read_shift(self.pan_shift_file) if backend_name != "sim" else 0.0,
+                                      on_pan_shift=(lambda v: write_shift(self.pan_shift_file, v))
+                                      if backend_name != "sim" else None)
 
         cmd_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              history=HistoryPolicy.KEEP_LAST)

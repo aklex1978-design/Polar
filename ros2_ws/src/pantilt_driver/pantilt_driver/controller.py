@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 from .backend import ServoBackend
 from .servo import (
+    DEG_PER_STEP,
     MULTITURN_LIMIT_DEG,
     AxisStatus,
     ServoConfig,
@@ -24,6 +25,10 @@ ERROR_STOPPED = 8
 # лічильник обертів скидається (до межі ±7,5 оберту лишається запас).
 REBASE_THRESHOLD_DEG = MULTITURN_LIMIT_DEG - 2 * 360.0
 
+# ST3020 у режимі положення: вал лише 0…360° (кроки 0…4095), за край ціль не виходить.
+RAW_MIN_DEG = 0.0
+RAW_MAX_DEG = 360.0 - DEG_PER_STEP
+
 
 @dataclass
 class CameraState:
@@ -40,7 +45,8 @@ class PanTiltController:
     """Керує горизонтальним (pan, азимут) і вертикальним (tilt, кут місця) сервоприводами."""
 
     def __init__(self, backend: ServoBackend, pan: ServoConfig, tilt: ServoConfig,
-                 link_timeout_s: float = 2.0, clock: Callable[[], float] = time.monotonic) -> None:
+                 link_timeout_s: float = 2.0, clock: Callable[[], float] = time.monotonic,
+                 pan_shift_deg: float = 0.0, on_pan_shift: Optional[Callable[[float], None]] = None) -> None:
         if pan.servo_id == tilt.servo_id:
             raise ValueError("Горизонтальний і вертикальний сервоприводи мають мати різні ID")
         self.backend = backend
@@ -51,6 +57,11 @@ class PanTiltController:
         self._last_link = clock()
         self._link_lost = False
         self._stopped = False
+        # Зсув шкали вала азимуту після перенесення середини ходу (див. _shift_pan): кут вала, який бачить
+        # сервопривід, = кут за нулем із налаштувань + зсув. Зберігається на Pi (on_pan_shift), бо
+        # перенесена середина зберігається в самому сервоприводі.
+        self.pan_shift_deg = pan_shift_deg
+        self._on_pan_shift = on_pan_shift
         self.state = CameraState()
         for cfg in (pan, tilt):
             backend.set_torque_limit(cfg.servo_id, cfg.torque_limit_pct)
@@ -87,6 +98,8 @@ class PanTiltController:
             raise IOError(f"сервопривід {cfg.servo_id} не відповідає")
         # Для азимуту — у межах одного оберту: кількість обертів після вимкнення не зберігається.
         cfg.zero_offset_deg = wrap360(reading.raw_deg) if cfg.continuous else reading.raw_deg
+        if axis == "pan":
+            self._set_pan_shift(0.0)          # нуль — від поточної шкали вала
         self.update()
         return cfg.zero_offset_deg
 
@@ -122,14 +135,57 @@ class PanTiltController:
             self.backend.stop(cfg.servo_id)
 
     # --- рух осей ----------------------------------------------------------
+    def _pan_raw(self, axis_deg: float) -> float:
+        return self.pan.axis_to_raw(axis_deg) + self.pan_shift_deg
+
     def _move_pan(self, azimuth_deg: float, speed_deg_s: float) -> None:
         cfg = self.pan
         if cfg.continuous:
             target_axis = shortest_target(self.state.pan.unwrapped_deg, wrap360(azimuth_deg))
         else:
             target_axis = cfg.clamp_axis(wrap360(azimuth_deg))
-        self.backend.move(cfg.servo_id, cfg.axis_to_raw(target_axis),
-                          cfg.limit_speed(speed_deg_s) * cfg.gear_ratio, cfg.acceleration)
+        st = self.state.pan
+        if st.reading is None:
+            raw = self._pan_raw(target_axis)
+        else:   # від поточного положення вала: у режимі положення вал показує кут лише в межах оберту
+            delta_raw = cfg.direction * (target_axis - st.unwrapped_deg) * cfg.gear_ratio
+            raw = st.reading.raw_deg + delta_raw
+            if not RAW_MIN_DEG <= raw <= RAW_MAX_DEG:
+                now_raw = self._shift_pan()
+                if now_raw is not None:
+                    raw = now_raw + delta_raw
+        raw = min(max(raw, RAW_MIN_DEG), RAW_MAX_DEG)
+        self.backend.move(cfg.servo_id, raw, cfg.limit_speed(speed_deg_s) * cfg.gear_ratio, cfg.acceleration)
+
+    def _set_pan_shift(self, shift_deg: float) -> None:
+        self.pan_shift_deg = shift_deg
+        if self._on_pan_shift is not None:
+            try:
+                self._on_pan_shift(shift_deg)
+            except OSError:
+                pass                          # не вдалося зберегти — працюємо далі, зсув у памʼяті
+
+    def _shift_pan(self) -> Optional[float]:
+        """Ціль азимуту за краєм ходу вала (0…360°): «скинути» шкалу — поточне положення вала стає серединою
+        (180°, калібрування середини ST3020), камера не рухається; далі рух продовжується в той самий бік.
+        Кут камери не змінюється: різниця шкал іде в pan_shift_deg. Повертає новий кут вала або None."""
+        sid = self.pan.servo_id
+        self.backend.stop(sid)
+        before = None
+        for _ in range(25):                   # дочекатися зупинки — інакше зсув буде неточний
+            before = self.backend.read(sid)
+            if before is None or not before.moving:
+                break
+            time.sleep(0.02)
+        if before is None:
+            return None
+        try:
+            after = self.backend.recenter(sid)
+        except (OSError, NotImplementedError):
+            return None
+        self._set_pan_shift(self.pan_shift_deg + after - before.raw_deg)
+        self.state.pan.reading = None         # старе зчитування — у старій шкалі
+        return after
 
     def _move_tilt(self, elevation_deg: float, speed_deg_s: float) -> None:
         cfg = self.tilt
@@ -144,8 +200,14 @@ class PanTiltController:
         status.online = reading is not None
         if reading is None:
             return
-        unwrapped = cfg.raw_to_axis(reading.raw_deg)
+        raw = reading.raw_deg - (self.pan_shift_deg if cfg is self.pan else 0.0)
+        unwrapped = cfg.raw_to_axis(raw)
         status.unwrapped_deg = unwrapped
+        if cfg is self.pan and not cfg.continuous and cfg.min_deg is not None and cfg.max_deg is not None:
+            # вал у режимі положення показує 0…360°: з кутів, що відрізняються на оберт, — ближчий до середини меж
+            mid = (cfg.min_deg + cfg.max_deg) / 2.0
+            unwrapped += 360.0 / cfg.gear_ratio * round((mid - unwrapped) * cfg.gear_ratio / 360.0)
+            status.unwrapped_deg = unwrapped
         status.axis_deg = wrap360(unwrapped) if cfg.continuous else unwrapped
         status.overheated = reading.temperature_c >= cfg.temperature_limit_c
 
@@ -186,7 +248,7 @@ class PanTiltController:
         cfg, pan = self.pan, self.state.pan
         if not cfg.continuous or pan.reading is None or pan.reading.moving:
             return
-        raw_from_zero = pan.reading.raw_deg - cfg.zero_offset_deg
+        raw_from_zero = pan.reading.raw_deg - self.pan_shift_deg - cfg.zero_offset_deg
         if abs(raw_from_zero) < REBASE_THRESHOLD_DEG:
             return
         turns = int(raw_from_zero // 360.0)

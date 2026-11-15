@@ -100,6 +100,7 @@ install -m 0644 "$HERE/polar-pantilt.service" "$HERE/polar-video.service" "$HERE
   "$HERE/polar-rosbridge.service" "$HERE/polar-video-ts.path" "$HERE/polar-video-ts.service" /etc/systemd/system/
 # прапорець мітки часу в кадрі: пише вузол сервоприводів (користувач polar), стежить polar-video-ts.path
 install -d -o polar -g polar /var/lib/polar/video
+install -d -o polar -g polar /var/lib/polar/servo     # зсув шкали вала азимуту (вузол сервоприводів)
 [ -f /var/lib/polar/video/timestamp ] || install -m 0644 -o polar -g polar /dev/null /var/lib/polar/video/timestamp
 echo 0 > /var/lib/polar/video/timestamp
 systemctl daemon-reload

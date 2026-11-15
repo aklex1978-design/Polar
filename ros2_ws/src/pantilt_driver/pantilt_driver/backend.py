@@ -67,8 +67,9 @@ class SimBackend(ServoBackend):
     """Імітатор сервоприводів ST3020: рух з постійною швидкістю до цілі, синтетична телеметрія."""
 
     def __init__(self, servo_ids, clock: Callable[[], float] = time.monotonic,
-                 voltage_v: float = 12.0) -> None:
+                 voltage_v: float = 12.0, position_mode: bool = False) -> None:
         self._clock = clock
+        self.position_mode = position_mode     # як справжній ST3020: ціль лише в межах вала 0…360°
         self._t = clock()
         self._voltage = voltage_v
         self.servos: Dict[int, _SimServo] = {sid: _SimServo() for sid in servo_ids}
@@ -115,7 +116,7 @@ class SimBackend(ServoBackend):
         s = self._live(servo_id)
         if s is None:
             return
-        s.goal_deg = raw_deg
+        s.goal_deg = min(max(raw_deg, 0.0), 360.0 * 4095 / 4096) if self.position_mode else raw_deg
         s.speed_deg_s = speed_deg_s
 
     def stop(self, servo_id: int) -> None:
