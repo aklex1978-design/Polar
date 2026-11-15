@@ -1,7 +1,9 @@
 """Слідкування і Виявлення: кадри всіх камер порівнюються з їхніми панорамами.
 
 Кожна камера обробляється у власному потоці: новий кадр з кутами → (камера стоїть?) → детектор →
-супровід обʼєктів → запис у detections (не частіше разу на секунду на обʼєкт). Режим один на систему:
+супровід обʼєктів → запис у detections (не частіше разу на секунду на обʼєкт). Камера оглядає зону
+(polar_core.patrol): обходить положення в межах кута; рух — зупиняється (підозра на ціль), обʼєкт біля
+краю кадру — повертається на нього. Режим один на систему:
 рух на будь-якій камері → «Виявлення»; руху немає на всіх камерах довше за час утримання → «Слідкування».
 """
 from __future__ import annotations
@@ -17,7 +19,9 @@ import numpy as np
 from polar_core import calibration as cal
 from polar_core.detection import (DETECTION, IDLE, MODE_TEXT, TRACKING, DetectionResult, Detector, ModeMachine,
                                   Tracker, load_settings)
+from polar_core.angles import wrap360
 from polar_core.mask import load_mask
+from polar_core.patrol import ALERT, Patroller, patrol_plan
 from polar_core.sync import LatencyMonitor
 
 from .target_service import TargetService
@@ -33,6 +37,14 @@ class CameraDetection:
     latency: Optional[LatencyMonitor] = None
     last_reference_update: float = 0.0
     frames: int = 0
+    patrol: Optional[Patroller] = None     # огляд зони; None — камера стоїть (час огляду 0)
+    patrol_text: str = ""
+
+    @property
+    def suspect(self):
+        """Підозра на ціль: (азимут від півночі, кут місця) або None — для наведення інших камер."""
+        p = self.patrol
+        return (p.suspect.az, p.suspect.el) if p is not None and p.state == ALERT and p.suspect else None
 
 
 class DetectionService:
@@ -141,17 +153,20 @@ class DetectionService:
                 continue
             if sf.angles.moving:
                 last_move = sf.t
+            size = (sf.image.shape[1], sf.image.shape[0])
+            if model is None or (model.width, model.height) != size:
+                with self.ctx.control._db_lock:
+                    model = cal.model_for(self.ctx.conn, rec, frame_size=size)
+                cam.patrol = self._make_patrol(rec, model)
+            pose = (wrap360(sf.angles.azimuth_deg + rec.north_offset_deg), sf.angles.elevation_deg)
             if sf.t - last_move < self.SETTLE_S:
                 self.targets.clear(name)
                 with self._lock:
                     cam.state = "камера рухається"
                     cam.result = None
+                self._patrol(rec, cam, sf, pose, False, None)
                 self._update_mode()
                 continue
-            size = (sf.image.shape[1], sf.image.shape[0])
-            if model is None or (model.width, model.height) != size:
-                with self.ctx.control._db_lock:
-                    model = cal.model_for(self.ctx.conn, rec, frame_size=size)
             ver = self.ctx.learning.version.get(name, 0)
             if mask_ver is None or self._clock() - mask_ver > 2.0:      # маску можуть змінити в калібруванні
                 with self.ctx.control._db_lock:
@@ -179,7 +194,46 @@ class DetectionService:
             cam.latency.record(rec.video_latency_ms + (now - sf.t) * 1000.0, True)
             self._save(rec, pairs, new, sf.t)
             self._maybe_update_reference(rec, cam, res, sf, model)
+            self._patrol(rec, cam, sf, pose, True, res)
             self._update_mode()
+
+    # --- огляд зони ------------------------------------------------------------------------------
+    def _make_patrol(self, rec, model) -> Optional[Patroller]:
+        s = self.settings
+        if s.patrol_dwell_s <= 0:
+            return None
+        cfg = self.ctx.control.config(rec.name)
+        el_lo = max(s.patrol_el_min_deg, cfg.tilt.min_deg if cfg.tilt.min_deg is not None else 0.0, 0.0)
+        el_hi = min(s.patrol_el_max_deg, cfg.tilt.max_deg if cfg.tilt.max_deg is not None else 90.0, 90.0)
+        el_hi = max(el_hi, el_lo)
+        limited = (not cfg.pan.continuous and cfg.pan.min_deg is not None and cfg.pan.max_deg is not None
+                   and cfg.pan.max_deg - cfg.pan.min_deg < 360.0)
+        plan = patrol_plan(model.hfov_deg, model.vfov_deg, el_lo, el_hi, s.patrol_step_pct / 100.0,
+                           rec.north_offset_deg, (cfg.pan.min_deg, cfg.pan.max_deg) if limited else None)
+        return Patroller(plan, s.patrol_dwell_s, max(1.0, s.hold_s), s.follow_edge_pct / 100.0,
+                         cyclic=not limited)
+
+    def _patrol(self, rec, cam: CameraDetection, sf, pose, still: bool, res) -> None:
+        p = cam.patrol
+        if p is None:
+            return
+        before = p.state
+        objects = res.objects if res is not None and res.compared else []
+        target = p.update(sf.t, pose, still, bool(res is not None and res.compared), objects,
+                          (sf.image.shape[1], sf.image.shape[0]))
+        if p.state != before:
+            if p.state == ALERT:
+                self._log(rec.id, "suspect", f"{rec.name}: підозра на ціль — азимут {p.suspect.az:.1f}°, "
+                                             f"кут місця {p.suspect.el:.1f}°; огляд зупинено")
+            else:
+                self._log(rec.id, "patrol", f"{rec.name}: руху немає — огляд продовжено")
+        if target is not None:
+            try:
+                p.commanded(self.ctx.control.go_to(rec.name, target[0], target[1], 0.0, source="patrol"))
+            except Exception as e:  # noqa: BLE001 — немає звʼязку тощо: огляд спробує знову
+                cam.patrol_text = f"огляд: {e}"
+                return
+        cam.patrol_text = p.text()
 
     def _update_mode(self) -> None:
         now = self._clock()

@@ -34,7 +34,8 @@ class WorkScreen(QWidget):
         self.learn_btn.clicked.connect(self._on_learn)
         self.track_btn = QPushButton("Слідкування")
         self.track_btn.setCheckable(True)
-        self.track_btn.setToolTip("Порівнювати кадри камер з панорамами; при русі режим сам стає «Виявлення»")
+        self.track_btn.setToolTip("Камери оглядають зону в межах кута і порівнюють кадри з панорамами; рух — камера "
+                                 "зупиняється (підозра на ціль) і йде за ціллю; режим сам стає «Виявлення»")
         self.track_btn.clicked.connect(self._on_track)
         top.addWidget(self.learn_btn)
         top.addWidget(self.track_btn)
@@ -100,6 +101,9 @@ class WorkScreen(QWidget):
         if color:
             from PyQt6.QtGui import QColor
             it.setForeground(QColor(color))
+        elif c == 2:
+            from PyQt6.QtCore import Qt
+            it.setData(Qt.ItemDataRole.ForegroundRole, None)          # колір теми (підозра минула)
 
     def _cell(self, table, r: int, c: int, text: str) -> None:
         it = table.item(r, c)
@@ -144,13 +148,16 @@ class WorkScreen(QWidget):
                 state = dc.state
                 objs = dc.result.objects if dc.result else []
                 detail = "; ".join(f"азимут {o.az:.1f}°, кут місця {o.el:.1f}°" for o in objs[:3])
+                if dc.patrol_text:                              # огляд зони / підозра на ціль
+                    detail = dc.patrol_text if dc.suspect is not None else \
+                        " · ".join(x for x in (dc.patrol_text, detail) if x)
             else:
                 state = st.text if st.state != "idle" else ("панорама застаріла" if rec.panorama_stale else
                                                              ("є панорама" if pano else "немає панорами"))
                 detail = st.message
             self._set(r, 0, rec.name)
             self._set(r, 1, state)
-            self._set(r, 2, detail or "")
+            self._set(r, 2, detail or "", RED if det.active and dc.suspect is not None else "")
             self._set(r, 3, f"{cov * 100:.1f} %")
             lat = dc.latency.percentile() if (det.active and dc.latency) else None
             if lat is None:

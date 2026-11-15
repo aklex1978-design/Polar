@@ -34,6 +34,12 @@ class DetectionSettings:
     sync_window_ms: float = 0.0          # 0 — тривалість кадру (етап 6)
     min_ray_angle_deg: float = 5.0       # етап 6
     confirm_frames: int = 3              # етап 6
+    # огляд зони в Слідкуванні (polar_core.patrol)
+    patrol_dwell_s: float = 3.0          # час огляду кожного положення, с; 0 — камера не рухається
+    patrol_el_min_deg: float = 0.0       # смуга огляду за кутом місця (центр кадру), °
+    patrol_el_max_deg: float = 30.0
+    patrol_step_pct: float = 80.0        # крок між положеннями, % поля зору (100 — без перекриття)
+    follow_edge_pct: float = 20.0        # обʼєкт ближче до краю кадру — камера повертається на нього, %
 
     def validate(self) -> List[str]:
         e = []
@@ -57,6 +63,14 @@ class DetectionSettings:
             e.append("мінімальний кут між променями — 0–90°")
         if not 1 <= self.confirm_frames <= 1000:
             e.append("кадрів для підтвердження пари — 1–1000")
+        if self.patrol_dwell_s < 0:
+            e.append("час огляду положення — 0 або більше")
+        if not 0 <= self.patrol_el_min_deg <= self.patrol_el_max_deg <= 90:
+            e.append("кут місця огляду — 0 ≤ від ≤ до ≤ 90°")
+        if not 10 <= self.patrol_step_pct <= 100:
+            e.append("крок огляду — 10–100 % поля зору")
+        if not 0 <= self.follow_edge_pct <= 45:
+            e.append("край кадру для стеження — 0–45 %")
         return e
 
 
