@@ -51,6 +51,14 @@ def _fmt(value: Optional[float], unit: str = "°", digits: int = 1) -> str:
     return "…" if value is None else f"{value:.{digits}f}{unit}"
 
 
+def _fmt_az(value: Optional[float]) -> str:
+    """Азимут 0…360°: 359,97° показується як 0,0°, а не 360,0°."""
+    if value is None:
+        return "…"
+    v = round(value % 360.0, 1)
+    return f"{0.0 if v >= 360.0 else v:.1f}°"
+
+
 class _Bridge(QObject):
     """Передає результат Future з робочого потоку в потік інтерфейсу."""
     done = pyqtSignal(object, object)
@@ -66,7 +74,8 @@ class ServoColumn:
         self.direction = QComboBox()
         self.direction.addItem("прямий", 1)
         self.direction.addItem("зворотний", -1)
-        self.zero = _spin(-3000, 3000, 0, 2)
+        self.zero = _spin(-3000, 3000, 0, 3)
+        self._zero_exact = 0.0          # точний нуль із бази / від Pi: поле показує лише 3 знаки
         self.gear = _spin(0.01, 100, 1, 2, step=0.1)
         self.speed = _spin(1, 360, 180, 0)
         self.accel = QSpinBox()
@@ -98,6 +107,7 @@ class ServoColumn:
     def load(self, s: ServoSettings) -> None:
         self.servo_id.setValue(s.servo_id)
         self.direction.setCurrentIndex(0 if s.direction == 1 else 1)
+        self._zero_exact = s.zero_offset_deg
         self.zero.setValue(s.zero_offset_deg)
         self.gear.setValue(s.gear_ratio)
         self.speed.setValue(s.max_speed_deg_s)
@@ -111,11 +121,16 @@ class ServoColumn:
             self.unlimited.setChecked(no_limits)
             self._toggle_limits(no_limits)
 
+    def _zero_value(self) -> float:
+        """Нуль не змінювали вручну — точне значення: заокруглене до 0,01° дає азимут −0,004° → 359,996°."""
+        shown = round(self._zero_exact, self.zero.decimals())
+        return self._zero_exact if abs(self.zero.value() - shown) < 1e-9 else self.zero.value()
+
     def read(self) -> ServoSettings:
         unlimited = bool(self.unlimited and self.unlimited.isChecked())
         return ServoSettings(
             axis=self.axis, servo_id=self.servo_id.value(), direction=self.direction.currentData(),
-            zero_offset_deg=self.zero.value(), gear_ratio=self.gear.value(),
+            zero_offset_deg=self._zero_value(), gear_ratio=self.gear.value(),
             max_speed_deg_s=self.speed.value(), acceleration=self.accel.value(),
             torque_limit_pct=self.torque.value(), temperature_limit_c=self.temp.value(),
             min_deg=None if unlimited else self.min_deg.value(),
@@ -127,7 +142,8 @@ class ServoColumn:
             self.tel_pos.setStyleSheet(f"color: {BAD}" if t is not None else "")
             self.tel_power.setText("…")
             return
-        self.tel_pos.setText(f"{t.position_deg:.1f}° · {t.temperature_c:.0f} °C")
+        pos = _fmt_az(t.position_deg) if self.axis == "pan" else f"{t.position_deg:.1f}°"
+        self.tel_pos.setText(f"{pos} · {t.temperature_c:.0f} °C")
         self.tel_pos.setStyleSheet(f"color: {BAD}" if t.temperature_c >= hot_c else "")
         self.tel_power.setText(f"{t.voltage_v:.1f} В · {t.current_a:.2f} А · {t.load_pct:.0f} %")
 
@@ -483,7 +499,7 @@ class ControlScreen(QWidget):
         elif sf is not None and st is not None:
             size = f"{st.frame_size[0]}×{st.frame_size[1]}" if st.frame_size else "…"
             ang = ("без кутів (немає звʼязку з сервоприводами)" if not sf.has_angles else
-                   f"кадр знято при азимуті {(sf.angles.azimuth_deg + self.service.config(self._streaming).north_offset_deg) % 360:.1f}°, "
+                   f"кадр знято при азимуті {_fmt_az(sf.angles.azimuth_deg + self.service.config(self._streaming).north_offset_deg)}, "
                    f"куті місця {sf.angles.elevation_deg:.1f}°")
             self.video_info.setText(f"{size}, {st.fps:.1f} кадрів/с · {ang}")
             self.video_info.setStyleSheet("" if sf.has_angles else f"color: {WARN}")
@@ -555,7 +571,7 @@ class ControlScreen(QWidget):
             self.calib.refresh(overlays=self.overlays.isChecked())
 
     def _show_status(self, st: CameraStatus) -> None:
-        self.cur_az.setText(f"Азимут: {_fmt(st.azimuth_deg)}")
+        self.cur_az.setText(f"Азимут: {_fmt_az(st.azimuth_deg)}")
         self.cur_el.setText(f"Кут місця: {_fmt(st.elevation_deg)}")
         self.cur_move.setText("Рух: рухається" if st.moving else "Рух: стоїть")
         self.link_label.setText(st.link_text)

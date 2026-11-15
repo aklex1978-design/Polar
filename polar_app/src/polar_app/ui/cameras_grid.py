@@ -224,7 +224,7 @@ class CamerasGridScreen(QWidget):
             pv.outline = pv.center = pv.azimuth = None
         cov = (f"покриття {tile.pano_coverage * 100:.1f} %" if tile.pano_coverage is not None
                else "панорами ще немає")
-        pv.label = f"азимут {pv.azimuth:.1f}° · місце {sf.angles.elevation_deg:.1f}°" if pv.azimuth is not None else ""
+        pv.label = f"азимут {round(pv.azimuth % 360.0, 1) % 360.0:.1f}° · місце {sf.angles.elevation_deg:.1f}°" if pv.azimuth is not None else ""
         tile.title.setText(f"{rec.name} · панорама: {cov}")
         pv.update()
 
