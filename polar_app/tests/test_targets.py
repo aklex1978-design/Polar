@@ -91,6 +91,38 @@ def test_target_confirmed_written_and_lost(ctx):
     assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'target_lost'").fetchone()[0] == 1
 
 
+def test_target_motion_course_speed_and_prediction(ctx):
+    """Ціль летить на схід 20 м/с і набирає 3 м/с: курс 90°, швидкості, прогноз координат через 10 с."""
+    import numpy as np
+
+    from polar_app.target_service import TargetService
+    clock = Clock()
+    svc = TargetService(ctx, clock)
+    recs = ctx.records()
+    s = DetectionSettings(hold_s=2.0, motion_window_s=2.0, predict_s=10.0)
+    svc.start(recs, s)
+    svc._stop.set()
+    svc._thread.join()
+    start = GeoPoint(50.4515, 30.5270, 450.0)
+    local = LocalFrame(start)
+    v = np.array([20.0, 0.0, 3.0])
+    for i in range(50):                                   # 2 с по 0,04 с
+        clock.t += 0.04
+        observe(svc, recs, local.to_geo(v * (i * 0.04)), clock.t)
+        svc.step()
+    tt = next(iter(svc.targets.values()))
+    m = tt.motion
+    assert m.course_deg == pytest.approx(90.0, abs=1.0)
+    assert m.speed_mps == pytest.approx(20.0, abs=0.5) and m.climb_mps == pytest.approx(3.0, abs=0.3)
+    expect = local.to_geo(v * (49 * 0.04 + 10.0))
+    assert np.linalg.norm(local.to_enu(tt.predicted) - local.to_enu(expect)) < 5.0
+    row = next(r for r in svc.rows() if r["camera"] == recs[0].name)
+    assert row["course"] == pytest.approx(90.0, abs=1.0) and row["pred_alt"] == pytest.approx(expect.altitude_m, abs=2)
+    db_row = ctx.conn.execute("SELECT course_deg, speed_mps, climb_mps, predict_s, pred_latitude, pred_longitude, "
+                              "pred_altitude_m FROM targets").fetchone()
+    assert db_row[0] == pytest.approx(90.0, abs=1.0) and db_row[3] == 10.0 and db_row[4] is not None
+
+
 def test_single_camera_gives_no_coordinates(ctx):
     from polar_app.target_service import TargetService
     clock = Clock()

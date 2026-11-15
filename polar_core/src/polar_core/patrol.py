@@ -11,11 +11,12 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from .angles import wrap180, wrap360
 from .learning import limit_plan
+from .motion import AngularMotion, AngularTrack
 
 PATROL = "огляд"
 ALERT = "підозра на ціль"
@@ -60,6 +61,16 @@ class Suspect:
     since: float
     last_seen: float
     follows: int = 0    # скільки разів камера поверталась за ціллю
+    track: AngularTrack = field(default_factory=AngularTrack)
+
+    def seen(self, t: float, az: float, el: float) -> None:
+        """Кути цілі з поточного кадру (за моделлю калібрування камери)."""
+        self.az, self.el, self.last_seen = az, el, t
+        self.track.add(t, az, el)
+
+    @property
+    def motion(self) -> Optional[AngularMotion]:
+        return self.track.motion()
 
 
 class Patroller:
@@ -67,7 +78,9 @@ class Patroller:
     (азимут від півночі, кут місця) або None; ціль після обмеження межами передається в commanded()."""
 
     def __init__(self, plan: Sequence[Tuple[float, float]], dwell_s: float, hold_s: float, edge_frac: float,
-                 cyclic: bool = True) -> None:
+                 cyclic: bool = True, window_s: float = 3.0, predict_s: float = 10.0) -> None:
+        self.window_s = window_s        # вікно оцінки руху підозри
+        self.predict_s = predict_s      # прогноз кутів через стільки секунд
         self.plan = list(plan)
         self.dwell_s = dwell_s
         self.hold_s = hold_s
@@ -137,7 +150,8 @@ class Patroller:
             if seen:                                            # рух — зупинитись і аналізувати
                 o = self._primary(seen)
                 self.state = ALERT
-                self.suspect = Suspect(o.az, o.el, t, t)
+                self.suspect = Suspect(o.az, o.el, t, t, track=AngularTrack(self.window_s))
+                self.suspect.seen(t, o.az, o.el)
                 return self._follow(o, t, frame_size)
             if t - self._arrived_t >= self.dwell_s:
                 self._advance()
@@ -147,8 +161,7 @@ class Patroller:
         # ALERT: камера стоїть на цілі; за краєм кадру — повертається за нею
         if seen:
             o = self._primary(seen)
-            s = self.suspect
-            s.az, s.el, s.last_seen = o.az, o.el, t
+            self.suspect.seen(t, o.az, o.el)
             return self._follow(o, t, frame_size)
         last = self.suspect.last_seen if self.suspect else t
         if arrived and t - max(last, self._arrived_t or t) >= self.hold_s:
@@ -169,7 +182,12 @@ class Patroller:
         if self.state == ALERT and self.suspect is not None:
             s = self.suspect
             az = round(s.az % 360.0, 1) % 360.0
-            return (f"ПІДОЗРА НА ЦІЛЬ: азимут {az:.1f}°, кут місця {s.el:.1f}°"
-                    + (f" · камера йде за ціллю ({s.follows})" if s.follows else ""))
+            text = f"ПІДОЗРА НА ЦІЛЬ: азимут {az:.1f}°, кут місця {s.el:.1f}°"
+            m = s.motion
+            if m is not None:
+                paz, pel = m.predict(self.predict_s)
+                text += (f" · рух {m.direction_text()} ({m.az_rate:+.2f}°/с, {m.el_rate:+.2f}°/с)"
+                         f" · через {self.predict_s:g} с: {round(paz, 1) % 360.0:.1f}° / {pel:.1f}°")
+            return text + (f" · камера йде за ціллю ({s.follows})" if s.follows else "")
         return f"огляд: положення {self.index + 1} з {len(self.plan)}"
 

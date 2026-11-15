@@ -130,6 +130,9 @@ def test_patrol_suspect_and_follow(ctx):
         az_t = (110.0 + 4.0 * (time.monotonic() - t0)) % 360.0
         return sf is not None and sf.has_angles and abs((sf.angles.azimuth_deg - az_t + 180) % 360 - 180) < 30
     assert wait(10, on_target)                                         # камера тримає ціль у кадрі
+    sus = cam.patrol.suspect
+    assert wait(10, lambda: sus.motion is not None and 2.0 < sus.motion.az_rate < 6.0), sus.motion  # ~4 °/с
+    assert "рух праворуч" in cam.patrol.text() and "через 10 с" in cam.patrol.text()
     fake.targets.remove(target)
     assert wait(20, lambda: cam.suspect is None and "огляд: положення" in cam.patrol_text)
     assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'patrol'").fetchone()[0] >= 1

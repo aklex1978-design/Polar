@@ -204,6 +204,16 @@ MIGRATIONS = [
     """
     ALTER TABLE cameras ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
     """,
+    # 11 — рух цілі: курс, швидкості і прогноз положення через predict_s секунд
+    """
+    ALTER TABLE targets ADD COLUMN course_deg REAL;
+    ALTER TABLE targets ADD COLUMN speed_mps REAL;
+    ALTER TABLE targets ADD COLUMN climb_mps REAL;
+    ALTER TABLE targets ADD COLUMN predict_s REAL;
+    ALTER TABLE targets ADD COLUMN pred_latitude REAL;
+    ALTER TABLE targets ADD COLUMN pred_longitude REAL;
+    ALTER TABLE targets ADD COLUMN pred_altitude_m REAL;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

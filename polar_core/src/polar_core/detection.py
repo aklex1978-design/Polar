@@ -40,6 +40,9 @@ class DetectionSettings:
     patrol_el_max_deg: float = 30.0
     patrol_step_pct: float = 80.0        # крок між положеннями, % поля зору (100 — без перекриття)
     follow_edge_pct: float = 20.0        # обʼєкт ближче до краю кадру — камера повертається на нього, %
+    # рух цілі (polar_core.motion)
+    motion_window_s: float = 3.0         # вікно оцінки напрямку і швидкості, с
+    predict_s: float = 10.0              # прогноз положення цілі через, с
 
     def validate(self) -> List[str]:
         e = []
@@ -71,6 +74,10 @@ class DetectionSettings:
             e.append("крок огляду — 10–100 % поля зору")
         if not 0 <= self.follow_edge_pct <= 45:
             e.append("край кадру для стеження — 0–45 %")
+        if not 0.5 <= self.motion_window_s <= 60:
+            e.append("вікно оцінки руху — 0,5–60 с")
+        if not 0 <= self.predict_s <= 3600:
+            e.append("інтервал прогнозу — 0–3600 с")
         return e
 
 

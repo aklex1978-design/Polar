@@ -5,6 +5,8 @@
 будує промені від положень камер (широта, довгота, висота), розвʼязує зіставлення і веде цілі:
 підтверджена ціль (пара тримається задану кількість кадрів поспіль) записується в таблицю targets,
 а її координати оновлюються; ціль, якої не бачили довше за час утримання, позначається «lost».
+За положеннями цілі за останні секунди — курс, швидкість, вертикальна швидкість і прогноз
+координат через заданий інтервал (polar_core.motion).
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Hashable, List, Optional, Tuple
 
 from polar_core.geo import GeoPoint, LocalFrame
+from polar_core.motion import Motion, MotionTrack
 from polar_core.triangulation import Confirmation, MatchParams, Target, make_ray, solve
 
 
@@ -40,6 +43,9 @@ class TrackedTarget:
     last_t: float
     keys: set = field(default_factory=set)   # (камера, трек), що входили в ціль
     saved_t: float = -1e9
+    track: MotionTrack = field(default_factory=MotionTrack)
+    motion: Optional[Motion] = None
+    predicted: Optional[GeoPoint] = None     # де буде ціль через predict_s
 
     @property
     def geo(self) -> GeoPoint:
@@ -60,6 +66,8 @@ class TargetService:
         self.params = MatchParams()
         self.confirm = Confirmation(3)
         self.lost_s = 5.0
+        self.motion_window_s = 3.0
+        self.predict_s = 10.0
         self.targets: Dict[int, TrackedTarget] = {}
         self.candidates: List[Target] = []          # усі цілі останнього розвʼязку (і не підтверджені)
         self._next_number = 1
@@ -82,6 +90,8 @@ class TargetService:
         self.params = MatchParams.from_settings(settings, fps=fps)
         self.confirm = Confirmation(self.params.confirm_frames)
         self.lost_s = max(1.0, settings.hold_s)
+        self.motion_window_s = getattr(settings, "motion_window_s", 3.0)
+        self.predict_s = getattr(settings, "predict_s", 10.0)
         with self._lock:
             self._obs.clear()
             self.targets.clear()
@@ -156,9 +166,11 @@ class TargetService:
         tt = next((x for x in self.targets.values() if x.keys & keys), None)
         wall = max(self._wall(r) for r in tgt.rays)
         if tt is None:
-            tt = TrackedTarget(self._next_number, None, tgt, wall, wall, now, set(keys))
+            tt = TrackedTarget(self._next_number, None, tgt, wall, wall, now, set(keys),
+                               track=MotionTrack(self.motion_window_s))
             self._next_number += 1
             self.targets[tt.number] = tt
+            self._update_motion(tt, tgt, now)
             self._write(tt)
             tt.saved_t = now
             g = tgt.geo
@@ -167,9 +179,17 @@ class TargetService:
         else:
             tt.target, tt.last_seen, tt.last_t = tgt, wall, now
             tt.keys |= keys
+            self._update_motion(tt, tgt, now)
             if now - tt.saved_t >= self.SAVE_EVERY_S:
                 self._write(tt)
                 tt.saved_t = now
+
+    def _update_motion(self, tt: TrackedTarget, tgt: Target, now: float) -> None:
+        """Час положення — середній час кадрів променів (не час кроку), щоб швидкість не залежала від затримок."""
+        t = sum(r.t for r in tgt.rays) / len(tgt.rays) if tgt.rays else now
+        tt.track.add(t, tgt.point)
+        tt.motion = tt.track.motion()
+        tt.predicted = self.frame.to_geo(tt.motion.predict(self.predict_s)) if tt.motion is not None else None
 
     def _wall(self, ray) -> dt.datetime:
         _t, obs = self._obs.get(ray.camera, (0.0, []))
@@ -178,19 +198,26 @@ class TargetService:
 
     def _write(self, tt: TrackedTarget, status: str = "active") -> None:
         g, t = tt.geo, tt.target
+        m, p = tt.motion, tt.predicted
         vals = (tt.first_seen.isoformat(timespec="milliseconds"), tt.last_seen.isoformat(timespec="milliseconds"),
-                g.latitude, g.longitude, g.altitude_m, t.distance_m, t.error_m, len(t.rays), status)
+                g.latitude, g.longitude, g.altitude_m, t.distance_m, t.error_m, len(t.rays), status,
+                m.course_deg if m else None, m.speed_mps if m else None, m.climb_mps if m else None,
+                self.predict_s if p else None, p.latitude if p else None, p.longitude if p else None,
+                p.altitude_m if p else None)
         with self.ctx.control._db_lock:
             with self.ctx.conn:
                 if tt.db_id is None:
                     cur = self.ctx.conn.execute(
                         "INSERT INTO targets (first_seen, last_seen, latitude, longitude, altitude_m, distance_m, "
-                        "error_m, cameras, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", vals)
+                        "error_m, cameras, status, course_deg, speed_mps, climb_mps, predict_s, pred_latitude, "
+                        "pred_longitude, pred_altitude_m) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", vals)
                     tt.db_id = cur.lastrowid
                 else:
                     self.ctx.conn.execute(
                         "UPDATE targets SET first_seen = ?, last_seen = ?, latitude = ?, longitude = ?, altitude_m = ?, "
-                        "distance_m = ?, error_m = ?, cameras = ?, status = ? WHERE id = ?", vals + (tt.db_id,))
+                        "distance_m = ?, error_m = ?, cameras = ?, status = ?, course_deg = ?, speed_mps = ?, "
+                        "climb_mps = ?, predict_s = ?, pred_latitude = ?, pred_longitude = ?, pred_altitude_m = ? "
+                        "WHERE id = ?", vals + (tt.db_id,))
 
     # --- для екранів -----------------------------------------------------------------------------------
     def rows(self) -> List[dict]:
@@ -218,6 +245,11 @@ class TargetService:
                         row.update(target=tt.number, lat=g.latitude, lon=g.longitude, alt=g.altitude_m,
                                    dist=tt.target.distances.get(rec.name), error=tt.target.error_m,
                                    cameras=len(tt.target.rays))
+                        m, p = tt.motion, tt.predicted
+                        if m is not None:
+                            row.update(course=m.course_deg, speed=m.speed_mps, climb=m.climb_mps)
+                        if p is not None:
+                            row.update(pred_lat=p.latitude, pred_lon=p.longitude, pred_alt=p.altitude_m)
                     out.append(row)
             return out
 

@@ -11,7 +11,9 @@ from ..learning_service import RUNNING
 
 BLUE, GREEN, RED, GREY = "#1e66d0", "#2e7d32", "#c62828", "#6b6b6b"
 TARGET_COLUMNS = ["Камера", "Ціль", "Час", "Азимут, °", "Кут місця, °", "Широта, °", "Довгота, °", "Висота, м",
-                  "Відстань, м"]
+                  "Відстань, м", "Курс, °", "Швидкість, м/с", "Верт. швидкість, м/с", "Прогноз: широта, °",
+                  "Прогноз: довгота, °", "Прогноз: висота, м"]
+PRED_COL = TARGET_COLUMNS.index("Прогноз: широта, °")
 
 
 class WorkScreen(QWidget):
@@ -58,7 +60,9 @@ class WorkScreen(QWidget):
         self.targets.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.targets.horizontalHeader().setStretchLastSection(True)
         self.targets.setToolTip("Один рядок — одна камера; камера, що цілі не бачить, — порожній рядок. "
-                                "Широта, довгота, висота і відстань — коли ціль бачать дві й більше камери.")
+                                "Широта, довгота, висота і відстань — коли ціль бачать дві й більше камери. "
+                                "Курс (від півночі), швидкість і прогноз — за рухом цілі за останні секунди "
+                                "(«Налаштування / Виявлення»).")
         v.addWidget(self.targets, 1)
         self.message = QLabel("")
         self.message.setWordWrap(True)
@@ -115,6 +119,12 @@ class WorkScreen(QWidget):
 
     def refresh_targets(self) -> None:
         det = self.ctx.detection
+        secs = getattr(det.targets, "predict_s", 10.0)
+        for i, name in enumerate(("широта, °", "довгота, °", "висота, м")):
+            label = f"Через {secs:g} с: {name}"
+            it = self.targets.horizontalHeaderItem(PRED_COL + i)
+            if it is not None and it.text() != label:
+                it.setText(label)
         rows = det.targets.rows() if det.active else [{"camera": r.name} for r in self.ctx.active_records()]
         self.targets.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -127,7 +137,14 @@ class WorkScreen(QWidget):
                     f"{row['lat']:.6f}" if "lat" in row else "",
                     f"{row['lon']:.6f}" if "lon" in row else "",
                     f"{row['alt']:.1f}" if "alt" in row else "",
-                    f"{row['dist']:.1f}" if row.get("dist") is not None else ""]
+                    f"{row['dist']:.1f}" if row.get("dist") is not None else "",
+                    f"{row['course']:.0f}" if row.get("course") is not None else
+                    ("стоїть" if "speed" in row else ""),
+                    f"{row['speed']:.1f}" if "speed" in row else "",
+                    f"{row['climb']:+.1f}" if "climb" in row else "",
+                    f"{row['pred_lat']:.6f}" if "pred_lat" in row else "",
+                    f"{row['pred_lon']:.6f}" if "pred_lon" in row else "",
+                    f"{row['pred_alt']:.1f}" if "pred_alt" in row else ""]
             for c, text in enumerate(vals):
                 self._cell(self.targets, i, c, text)
 
