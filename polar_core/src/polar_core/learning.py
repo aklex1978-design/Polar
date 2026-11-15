@@ -22,6 +22,29 @@ def learning_plan(hfov_deg: float, vfov_deg: float, el_min: float = 0.0, el_max:
     return plan
 
 
+def limit_plan(plan: List[Tuple[float, float]], az_min: float, az_max: float,
+               tol: float = 0.5) -> List[Tuple[float, float]]:
+    """План лише в межах азимуту камери (кут датчика, az_min < az_max у 0…360): вузли поза межами
+    відкидаються, а на краях кожного ряду додаються вузли рівно на межах — панорама доходить до них.
+    Порядок обходу (змійка) зберігається."""
+    rows: List[Tuple[float, List[float]]] = []
+    for az, el in plan:
+        if not rows or rows[-1][0] != el:
+            rows.append((el, []))
+        rows[-1][1].append(az)
+    out = []
+    for i, (el, azs) in enumerate(rows):
+        inside = sorted(a for a in azs if az_min - tol <= a <= az_max + tol)
+        if not inside or inside[0] - az_min > tol:
+            inside.insert(0, az_min)
+        if inside[-1] < az_max - tol:
+            inside.append(az_max)
+        if i % 2:
+            inside.reverse()
+        out.extend((a, el) for a in inside)
+    return out
+
+
 def elevation_rows(vfov_deg: float, el_min: float = 0.0, el_max: float = 90.0) -> List[float]:
     """Ряди кута місця з кроком VFOV/2 від нижньої межі; останній ряд — коли кадр дістає до верхньої."""
     els = []

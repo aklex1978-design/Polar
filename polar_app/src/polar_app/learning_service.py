@@ -15,7 +15,7 @@ from typing import Callable, Dict, List, Optional
 from polar_core import calibration as cal
 from polar_core import cameras as cm
 from polar_core.angles import wrap180, wrap360
-from polar_core.learning import (aligned_start, az_step, elevation_rows, learning_plan, next_azimuth,
+from polar_core.learning import (aligned_start, az_step, elevation_rows, learning_plan, limit_plan, next_azimuth,
                                  next_row)
 from polar_core.panorama import DEFAULT_MAX_PX_PER_DEG, Panorama
 
@@ -57,6 +57,7 @@ class LearningService:
         self._lock = threading.Lock()
         self._snaps: Dict[str, GridSnapshots] = {}
         self._step_target: Dict[str, tuple] = {}     # остання ціль кнопок кроку: (азимут, кут місця, час)
+        self.step_note: Dict[str, str] = {}          # напис, якщо крок упирається в межу кута
         self.on_finished: Optional[Callable[[List[str]], None]] = None   # усі камери завершили Навчання
         self._notified = False
 
@@ -230,6 +231,10 @@ class LearningService:
         # кроки по азимуту від півночі кратні кроку HFOV/2 — на кожному кроці зберігається знімок
         plan = learning_plan(rec.fov_x_deg, vfov, el_lo, el_hi,
                              az_start=aligned_start(rec.north_offset_deg, rec.fov_x_deg))
+        if not cfg.pan.continuous and cfg.pan.min_deg is not None and cfg.pan.max_deg is not None \
+                and cfg.pan.max_deg - cfg.pan.min_deg < 360.0:
+            # межі азимуту: камера не йде в заборонену зону, панорама — до самих меж
+            plan = limit_plan(plan, cfg.pan.min_deg, cfg.pan.max_deg)
         return model, plan, elevation_rows(vfov, el_lo, el_hi)
 
     def _snapshots(self, rec, rows) -> GridSnapshots:
@@ -281,6 +286,7 @@ class LearningService:
             el = next_row(rows, el, d_el)
         if d_az:
             az = next_azimuth(az, az_step(rec.fov_x_deg), d_az)
+        self.step_note[name] = self.ctx.control.limit_note(name, az, el)   # крок упирається в межу кута
         target = self.ctx.control.go_to(name, az, el, 0.0)
         self._step_target[name] = (target[0], target[1], self._clock())
         return target

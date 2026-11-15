@@ -17,7 +17,7 @@ from polar_core.angles import wrap360
 from polar_core.control import ManualControlLocked
 
 from .calibration_screen import CameraView, PanoramaView, az_limits_north
-from .common import BAD, GOOD, frame_pixmap
+from .common import BAD, GOOD, WARN, frame_pixmap
 from .snapshot_window import SnapshotWindow
 
 
@@ -126,7 +126,9 @@ class CamerasGridScreen(QWidget):
                 tile.say(str(e), BAD)
             return
         if tile:
-            tile.say(f"→ азимут {az:.1f}°, кут місця {el:.1f}°")
+            note = self.ctx.learning.step_note.get(name, "")
+            tile.say(f"→ азимут {az:.1f}°, кут місця {el:.1f}°" + (f" · {note}" if note else ""),
+                     WARN if note else "")
 
     def open_snapshot(self, name: str) -> SnapshotWindow:
         w = self.snapshot_windows.get(name)
