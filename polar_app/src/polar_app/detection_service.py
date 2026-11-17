@@ -12,7 +12,7 @@ import datetime as dt
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -21,7 +21,9 @@ from polar_core.detection import (DETECTION, IDLE, MODE_TEXT, TRACKING, Detectio
                                   Tracker, load_settings)
 from polar_core.angles import wrap360
 from polar_core.mask import load_mask
-from polar_core.patrol import ALERT, Patroller, patrol_plan
+from polar_core.cueing import ray_search_nodes
+from polar_core.geo import bearing_elevation
+from polar_core.patrol import ALERT, CUE, Cue, Patroller, patrol_plan
 from polar_core.sync import LatencyMonitor
 
 from .target_service import TargetService
@@ -39,6 +41,7 @@ class CameraDetection:
     frames: int = 0
     patrol: Optional[Patroller] = None     # огляд зони; None — камера стоїть (час огляду 0)
     patrol_text: str = ""
+    fov: Tuple[float, float] = (60.0, 34.0)  # фактичні кути огляду кадру (для кроку наведення)
 
     @property
     def suspect(self):
@@ -80,7 +83,7 @@ class DetectionService:
 
     def _start(self) -> List[str]:
         if self.active:
-            return list(self._threads)
+            return [n for n in self._threads if n != "__cue__"]
         with self.ctx.control._db_lock:
             self.settings = load_settings(self.ctx.conn)
         self.mode = ModeMachine(self.settings.hold_s)
@@ -97,6 +100,9 @@ class DetectionService:
             t = threading.Thread(target=self._run, args=(rec,), name=f"detect-{rec.name}", daemon=True)
             self._threads[rec.name] = t
             names.append(rec.name)
+        if names and self.settings.cue_others:
+            ct = threading.Thread(target=self._cue_loop, name="cue", daemon=True)
+            self._threads["__cue__"] = ct
         if names:
             self.targets.start(self.ctx.active_records(), self.settings)
             self.mode.start_tracking()
@@ -158,6 +164,7 @@ class DetectionService:
                 with self.ctx.control._db_lock:
                     model = cal.model_for(self.ctx.conn, rec, frame_size=size)
                 cam.patrol = self._make_patrol(rec, model)
+                cam.fov = (model.hfov_deg, model.vfov_deg)
             pose = (wrap360(sf.angles.azimuth_deg + rec.north_offset_deg), sf.angles.elevation_deg)
             if sf.t - last_move < self.SETTLE_S:
                 self.targets.clear(name)
@@ -225,6 +232,8 @@ class DetectionService:
             if p.state == ALERT:
                 self._log(rec.id, "suspect", f"{rec.name}: підозра на ціль — азимут {p.suspect.az:.1f}°, "
                                              f"кут місця {p.suspect.el:.1f}°; огляд зупинено")
+            elif p.state == CUE:
+                self._log(rec.id, "cue", f"{rec.name}: {p.text()}")
             else:
                 self._log(rec.id, "patrol", f"{rec.name}: руху немає — огляд продовжено")
         if target is not None:
@@ -273,6 +282,56 @@ class DetectionService:
         self.ctx.learning.update_reference(rec.name, sf.image, model, sf.angles.azimuth_deg,
                                            sf.angles.elevation_deg, exclude)
         cam.last_reference_update = self._clock()
+
+    # --- наведення інших камер --------------------------------------------------------------------
+    CUE_PERIOD_S = 0.5
+
+    def _cue_loop(self) -> None:
+        while not self._stop.wait(self.CUE_PERIOD_S):
+            try:
+                self.cue_step()
+            except Exception as e:  # noqa: BLE001 — потік наведення не має падати
+                self._log(None, "cue_error", str(e))
+
+    def cue_step(self) -> None:
+        """Камери без своєї підозри: є ціль з координатами — навестись на неї; інакше є підозра на іншій
+        камері — шукати ціль уздовж її променя; нічого — огляд."""
+        ts = self.targets
+        if ts.frame is None:
+            return
+        with self._lock:
+            cams = {n: c for n, c in self.cams.items() if c.patrol is not None}
+        suspects = [(n, c.patrol.suspect) for n, c in cams.items()
+                    if c.patrol.state == ALERT and c.patrol.suspect is not None]
+        located = ts.located(lead_s=0.3)
+        s = self.settings
+        for name, cam in cams.items():
+            p = cam.patrol
+            pos = ts.position(name)
+            if p.state == ALERT or pos is None:
+                continue
+            hfov, vfov = cam.fov
+            step = min(hfov, vfov) * s.patrol_step_pct / 100.0
+
+            def allowed(az, el, name=name):
+                return not self.ctx.control.limit_note(name, az, el)
+            cue = None
+            if located:
+                number, geo = located[0]
+                az, el, _d = bearing_elevation(ts.frame, pos, geo)
+                if allowed(az, el):
+                    cue = Cue("point", [(az, el)], f"ціль №{number}", ("point", number), tol_deg=min(hfov, vfov) * 0.15)
+            if cue is None:
+                for src, sus in suspects:
+                    spos = ts.position(src)
+                    if src == name or spos is None:
+                        continue
+                    nodes = ray_search_nodes(ts.frame, spos, sus.az, sus.el, pos, s.cue_min_range_m,
+                                             s.max_range_m, step, allowed)
+                    if nodes:
+                        cue = Cue("search", nodes, f"променю «{src}»", ("search", src))
+                        break
+            p.cue(cue)
 
     # --- стан для екранів ----------------------------------------------------------------------
     def camera(self, name: str) -> CameraDetection:

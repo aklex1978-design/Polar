@@ -43,6 +43,9 @@ class DetectionSettings:
     # рух цілі (polar_core.motion)
     motion_window_s: float = 3.0         # вікно оцінки напрямку і швидкості, с
     predict_s: float = 10.0              # прогноз положення цілі через, с
+    # наведення інших камер на підозру (polar_core.cueing)
+    cue_others: int = 1                  # 1 — наводити, 0 — ні
+    cue_min_range_m: float = 100.0       # пошук уздовж променя — від цієї відстані до максимальної дальності
 
     def validate(self) -> List[str]:
         e = []
@@ -78,6 +81,10 @@ class DetectionSettings:
             e.append("вікно оцінки руху — 0,5–60 с")
         if not 0 <= self.predict_s <= 3600:
             e.append("інтервал прогнозу — 0–3600 с")
+        if self.cue_others not in (0, 1):
+            e.append("наведення інших камер — 0 або 1")
+        if not 1 <= self.cue_min_range_m < self.max_range_m:
+            e.append("пошук по променю: мінімальна відстань — від 1 м до максимальної дальності")
         return e
 
 

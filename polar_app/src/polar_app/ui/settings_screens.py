@@ -204,6 +204,10 @@ DETECTION_FIELDS = [
      "Напрямок і швидкість — за положеннями цілі за стільки останніх секунд (більше — плавніше, але повільніше)"),
     ("predict_s", "Прогноз положення цілі через, с", 0, 3600, 1, 0,
      "Де буде ціль (координати, висота; для однієї камери — кути) через цей час, якщо рух не зміниться"),
+    ("cue_others", "Наводити інші камери на підозру (1 — так, 0 — ні)", 0, 1, 1, 0,
+     "Підозра на одній камері — інші шукають ціль уздовж її променя; ціль з координатами — наводяться прямо"),
+    ("cue_min_range_m", "Наведення: пошук по променю від, м", 1, 100000, 10, 0,
+     "Ближня межа пошуку уздовж променя; дальня — максимальна дальність виявлення"),
 ]
 
 
@@ -218,7 +222,8 @@ class DetectionSettingsScreen(_Screen):
         f = QFormLayout(box)
         self.fields = {}
         for name, label, lo, hi, step, dec, tip in DETECTION_FIELDS:
-            w = QSpinBox() if dec == 0 and name in ("diff_threshold", "confirm_frames") else QDoubleSpinBox()
+            w = QSpinBox() if dec == 0 and name in ("diff_threshold", "confirm_frames", "cue_others") \
+                else QDoubleSpinBox()
             w.setRange(lo, hi)
             if isinstance(w, QDoubleSpinBox):
                 w.setDecimals(dec)

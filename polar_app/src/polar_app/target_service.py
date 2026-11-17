@@ -219,6 +219,21 @@ class TargetService:
                         "climb_mps = ?, predict_s = ?, pred_latitude = ?, pred_longitude = ?, pred_altitude_m = ? "
                         "WHERE id = ?", vals + (tt.db_id,))
 
+    # --- для наведення камер -------------------------------------------------------------------------
+    def position(self, name: str) -> Optional[GeoPoint]:
+        return self._positions.get(name)
+
+    def located(self, lead_s: float = 0.0) -> List[Tuple[int, GeoPoint]]:
+        """Цілі з координатами: (номер, положення через lead_s з урахуванням руху), найсвіжіші першими."""
+        with self._lock:
+            out = []
+            for tt in sorted(self.targets.values(), key=lambda x: -x.last_t):
+                if tt.motion is not None and self.frame is not None:
+                    out.append((tt.number, self.frame.to_geo(tt.motion.predict(lead_s))))
+                else:
+                    out.append((tt.number, tt.geo))
+            return out
+
     # --- для екранів -----------------------------------------------------------------------------------
     def rows(self) -> List[dict]:
         """Таблиця виявлених цілей: один рядок — одна камера (кілька обʼєктів камери — кілька рядків).

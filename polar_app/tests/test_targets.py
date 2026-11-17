@@ -191,5 +191,41 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         assert wait(10, stored)                            # запис у базу — асинхронно
         row = c.conn.execute(q).fetchone()
         assert row[3] == 2 and row[2] == pytest.approx(330.0, abs=tol)
+
+        # огляд + наведення: камери самі обходять зону; та, що першою побачить ціль, — підозра, інша
+        # шукає уздовж її променя (або одразу наводиться на ціль з координатами)
+        import numpy as np
+
+        from polar_core.detection import save_settings
+        from polar_core.patrol import CUE
+        c.detection.stop()
+        target = GeoPoint(50.4470, 30.5200, 350.0)                    # нова ціль: стару еталон уже міг «вивчити»
+        sims = {}
+        for r in recs:
+            sims[r.name] = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), target)[:2]
+        els = [el for _az, el in sims.values()]
+        with c.control._db_lock:
+            save_settings(c.conn, DetectionSettings(hold_s=3.0, reference_update_min=0, patrol_dwell_s=0.5,
+                                                    patrol_el_min_deg=round(min(els)), patrol_el_max_deg=round(min(els)),
+                                                    follow_edge_pct=10, cue_others=1, cue_min_range_m=50))
+            c.conn.execute("DELETE FROM targets")
+        old = {r.name: opts["open_factory"].cams.get(r.name) for r in recs}
+        assert sorted(c.detection.start()) == sorted(r.name for r in recs)
+        assert "__cue__" in c.detection._threads
+        assert wait(10, lambda: all(opts["open_factory"].cams.get(r.name) is not old[r.name] for r in recs))
+        a_name, b_name = recs[0].name, recs[1].name
+        # спершу ціль бачить лише камера A (відео перепідключено — нові камери імітатора)
+        opts["open_factory"].cams[a_name].targets[:] = [SimTarget(*sims[a_name], size_deg=1.2, brightness=0)]
+        cam_a, cam_b = c.detection.camera(a_name), c.detection.camera(b_name)
+        assert wait(60, lambda: cam_a.suspect is not None), cam_a.patrol_text
+        assert wait(10, lambda: cam_b.patrol.state == CUE), cam_b.patrol_text       # B шукає по променю A
+        assert "НАВЕДЕННЯ: пошук по променю «" + a_name in cam_b.patrol_text
+        with c.control._db_lock:
+            assert c.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'cue'").fetchone()[0] >= 1
+        opts["open_factory"].cams[b_name].targets[:] = [SimTarget(*sims[b_name], size_deg=1.2, brightness=0)]
+        assert wait(60, lambda: c.detection.targets.targets), (cam_a.patrol_text, cam_b.patrol_text)
+        tt = next(iter(c.detection.targets.targets.values()))
+        err = float(np.linalg.norm(frame.to_enu(tt.geo) - frame.to_enu(target)))
+        assert err <= c.detection.targets.params.tolerance(tt.target.distance_m), err
     finally:
         c.shutdown()

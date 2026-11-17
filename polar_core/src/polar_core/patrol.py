@@ -20,6 +20,7 @@ from .motion import AngularMotion, AngularTrack
 
 PATROL = "огляд"
 ALERT = "підозра на ціль"
+CUE = "наведення"
 
 ARRIVE_TOL_DEG = 1.5        # камера дійшла до цілі
 MOVE_TIMEOUT_S = 20.0       # не дійшла (межа, заклинило) — далі однаково
@@ -73,6 +74,17 @@ class Suspect:
         return self.track.motion()
 
 
+@dataclass
+class Cue:
+    """Наведення від інших камер: kind «point» — на ціль з координатами (один вузол, оновлюється),
+    «search» — пошук уздовж променя камери, що бачить підозру (вузли від ближніх до дальніх)."""
+    kind: str
+    nodes: List[Tuple[float, float]]
+    label: str
+    key: tuple
+    tol_deg: float = 3.0            # «point»: на скільки має зсунутись ціль, щоб камера перенавелась
+
+
 class Patroller:
     """Стан огляду однієї камери. update() викликається на кожен кадр і повертає нову ціль камери
     (азимут від півночі, кут місця) або None; ціль після обмеження межами передається в commanded()."""
@@ -93,6 +105,10 @@ class Patroller:
         self._cmd_t = 0.0
         self._arrived_t: Optional[float] = None
         self.suspect: Optional[Suspect] = None
+        self.cue_target: Optional[Cue] = None
+        self.cue_index = 0
+        self._cue_dir = 1
+        self._cue_req = None            # з потоку наведення: ("set", Cue | None); застосовується в update()
 
     # --- допоміжне ---------------------------------------------------------------------
     def _issue(self, target: Tuple[float, float], t: float) -> Tuple[float, float]:
@@ -126,6 +142,48 @@ class Patroller:
             self._dir = -self._dir
         self.index += self._dir
 
+    def cue(self, cue: Optional[Cue]) -> None:
+        """Запит наведення (з іншого потоку); None — наведення не потрібне, далі огляд."""
+        self._cue_req = ("set", cue)
+
+    def _apply_cue(self, cue: Optional[Cue], t: float) -> Optional[Tuple[float, float]]:
+        if self.state == ALERT:                     # своя підозра важливіша — запит ігнорується
+            return None
+        if cue is None or not cue.nodes:
+            if self.state == CUE:
+                self.state, self.cue_target = PATROL, None
+                return self._issue(self.plan[self.index], t)
+            return None
+        cur = self.cue_target
+        if self.state == CUE and cur is not None and cur.key == cue.key:
+            if cue.kind == "point":
+                new = cue.nodes[0]
+                moved = max(abs(wrap180(new[0] - cur.nodes[0][0])), abs(new[1] - cur.nodes[0][1]))
+                if moved > cue.tol_deg:
+                    self.cue_target = cue
+                    return self._issue(new, t)
+                cur.label = cue.label
+                return None
+            self.cue_target = cue                   # промінь трохи змістився — нові вузли, той самий хід
+            self.cue_index = min(self.cue_index, len(cue.nodes) - 1)
+            return None
+        self.state, self.cue_target, self.cue_index, self._cue_dir = CUE, cue, 0, 1
+        return self._issue(cue.nodes[0], t)
+
+    def _advance_cue(self) -> None:
+        n = len(self.cue_target.nodes)
+        if n <= 1:
+            return
+        if not 0 <= self.cue_index + self._cue_dir < n:
+            self._cue_dir = -self._cue_dir
+        self.cue_index += self._cue_dir
+
+    def _start_alert(self, o, t: float, frame_size) -> Optional[Tuple[float, float]]:
+        self.state = ALERT
+        self.suspect = Suspect(o.az, o.el, t, t, track=AngularTrack(self.window_s))
+        self.suspect.seen(t, o.az, o.el)
+        return self._follow(o, t, frame_size)
+
     @staticmethod
     def _primary(objects):
         return max(objects, key=lambda o: o.area_px)
@@ -137,6 +195,11 @@ class Patroller:
         compared — кадр порівняно з панорамою; objects — виявлені обʼєкти (DetectedObject)."""
         if not self.plan:
             return None
+        req, self._cue_req = self._cue_req, None
+        if req is not None:
+            cmd = self._apply_cue(req[1], t)
+            if cmd is not None:
+                return cmd
         arrived = self._arrived(t, pose, still)
         if arrived and self._arrived_t is None:
             self._arrived_t = t
@@ -148,14 +211,21 @@ class Patroller:
             if not arrived:
                 return None
             if seen:                                            # рух — зупинитись і аналізувати
-                o = self._primary(seen)
-                self.state = ALERT
-                self.suspect = Suspect(o.az, o.el, t, t, track=AngularTrack(self.window_s))
-                self.suspect.seen(t, o.az, o.el)
-                return self._follow(o, t, frame_size)
+                return self._start_alert(self._primary(seen), t, frame_size)
             if t - self._arrived_t >= self.dwell_s:
                 self._advance()
                 return self._issue(self.plan[self.index], t)
+            return None
+
+        if self.state == CUE:                                   # навелась за іншими камерами
+            if not arrived:
+                return None
+            if seen:
+                self.cue_target = None
+                return self._start_alert(self._primary(seen), t, frame_size)
+            if self.cue_target.kind == "search" and t - self._arrived_t >= self.dwell_s:
+                self._advance_cue()
+                return self._issue(self.cue_target.nodes[self.cue_index], t)
             return None
 
         # ALERT: камера стоїть на цілі; за краєм кадру — повертається за нею
@@ -189,5 +259,10 @@ class Patroller:
                 text += (f" · рух {m.direction_text()} ({m.az_rate:+.2f}°/с, {m.el_rate:+.2f}°/с)"
                          f" · через {self.predict_s:g} с: {round(paz, 1) % 360.0:.1f}° / {pel:.1f}°")
             return text + (f" · камера йде за ціллю ({s.follows})" if s.follows else "")
+        if self.state == CUE and self.cue_target is not None:
+            c = self.cue_target
+            if c.kind == "point":
+                return f"НАВЕДЕННЯ на {c.label}"
+            return f"НАВЕДЕННЯ: пошук по {c.label} · положення {self.cue_index + 1} з {len(c.nodes)}"
         return f"огляд: положення {self.index + 1} з {len(self.plan)}"
 

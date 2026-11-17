@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QPushButton, QTab
                              QVBoxLayout, QWidget)
 
 from polar_core.detection import DETECTION, TRACKING
+from polar_core.patrol import CUE
 
 from ..learning_service import RUNNING
 
@@ -174,7 +175,8 @@ class WorkScreen(QWidget):
                 detail = st.message
             self._set(r, 0, rec.name)
             self._set(r, 1, state)
-            self._set(r, 2, detail or "", RED if det.active and dc.suspect is not None else "")
+            self._set(r, 2, detail or "", RED if det.active and dc.suspect is not None else
+                      (BLUE if det.active and dc.patrol is not None and dc.patrol.state == CUE else ""))
             self._set(r, 3, f"{cov * 100:.1f} %")
             lat = dc.latency.percentile() if (det.active and dc.latency) else None
             if lat is None:
