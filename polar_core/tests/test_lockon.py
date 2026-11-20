@@ -20,15 +20,15 @@ def frame_with(spots, bg=60):
 def test_lock_follows_spot_while_camera_moves():
     az0, el0 = MODEL.pixel_to_angles(400, 200, 100.0, 10.0)
     lk = LockOn(az0, el0, size_px=3)
-    r = lk.update(frame_with([(400, 200, 1, 230)]), MODEL, 100.0, 10.0, 0.0, threshold=30)
+    r = lk.update(frame_with([(400, 200, 1, 230)]), MODEL, 100.0, 10.0, 0.0, k=5.0, floor=8.0)
     assert r is not None and r.u == pytest.approx(400, abs=0.5) and r.v == pytest.approx(200, abs=0.5)
     # камера повернула на 3° праворуч, ціль зсунулась на 1° — на кадрі вона лівіше
     az1, el1 = az0 + 1.0, el0
     u1, v1, _ok = MODEL.angles_to_pixel(az1, el1, 103.0, 10.0)
     r = lk.update(frame_with([(int(round(u1)), int(round(v1)), 1, 230), (100, 400, 2, 250)]), MODEL, 103.0, 10.0,
-                  0.1, threshold=30)
+                  0.1, k=5.0, floor=8.0)
     assert r is not None and abs(r.az - az1) < 0.15 and abs(r.el - el1) < 0.15    # не інша, далека пляма
-    assert lk.update(frame_with([]), MODEL, 103.0, 10.0, 0.2, threshold=30) is None   # зникла
+    assert lk.update(frame_with([]), MODEL, 103.0, 10.0, 0.2, k=5.0, floor=8.0) is None   # зникла
 
 
 def test_center_control_is_proportional_and_has_deadband():

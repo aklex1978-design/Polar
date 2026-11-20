@@ -216,7 +216,8 @@ class DetectionService:
                 cam.state = ("камера рухається" if not res.compared and res.reason == "камера рухається"
                              else (res.reason if not res.compared else
                                    (f"обʼєктів: {len(res.objects)}" if res.objects else
-                                    (f"перевірка плям: {len(res.candidates)}" if res.candidates else "руху немає"))))
+                                    (f"перевірка плям: {len(res.candidates)}" if res.candidates else "руху немає")))
+                             + (f" · шум {res.noise:.1f}, поріг {res.threshold:.0f}" if res.compared else ""))
             cam.latency.record(rec.video_latency_ms + (now - sf.t) * 1000.0, True)
             self._save(rec, pairs, new, sf.t)
             self._maybe_update_reference(rec, cam, res, sf, model)
@@ -238,7 +239,8 @@ class DetectionService:
         if cam.aim is None:
             cam.aim = CenterControl(max(0.2, self.settings.follow_center_pct / 100.0 * cam.fov[0]))
         sensor_az, el = sf.angles.azimuth_deg, sf.angles.elevation_deg
-        r = cam.lockon.update(sf.image, model, sensor_az, el, sf.t, float(self.settings.diff_threshold))
+        r = cam.lockon.update(sf.image, model, sensor_az, el, sf.t, self.settings.sensitivity_k,
+                              float(self.settings.min_threshold))
         cam.lock = r
         if r is None:
             return False

@@ -159,12 +159,12 @@ def test_settings_roundtrip(tmp_path):
     conn = db.connect(tmp_path / "p.sqlite")
     s = load_settings(conn)
     assert s == DetectionSettings()
-    s.diff_threshold, s.hold_s, s.min_area_px, s.min_frames = 40, 2.5, 3, 4
+    s.sensitivity_k, s.hold_s, s.min_area_px, s.min_frames = 4.0, 2.5, 3, 4
     save_settings(conn, s)
     assert load_settings(conn) == s
     from polar_core import calibration as cal
     assert cal.accuracy_criterion(conn) == s.accuracy_deg
-    s.diff_threshold = 300
+    s.min_threshold = 300
     with pytest.raises(ValueError):
         save_settings(conn, s)
 
@@ -185,3 +185,30 @@ def test_only_brightest_objects_at_most_five(world):
     b = [o.brightness for o in res.objects]
     assert b == sorted(b, reverse=True)
     assert b == sorted((o.brightness for o in every), reverse=True)[:5]          # саме 5 найяскравіших
+
+
+def test_noise_threshold_per_tile():
+    from polar_core.detection import noise_threshold
+    rng = np.random.default_rng(0)
+    d = rng.normal(0, 2.0, (240, 320)).astype(np.float32)
+    d[:, 160:] = rng.normal(0, 10.0, (240, 160))                  # права половина — «марево», шум у 5 разів більший
+    d[100:102, 50:52] = 200                                       # поодинокі цілі на шум майже не впливають
+    noise, thr = noise_threshold(d, np.ones_like(d, bool), k=5.0, floor=8.0)
+    assert noise[:, :3].mean() == pytest.approx(2.0, rel=0.2) and noise[:, 5:].mean() == pytest.approx(10.0, rel=0.2)
+    assert thr[120, 20] == pytest.approx(10.0, rel=0.25) and thr[120, 300] == pytest.approx(50.0, rel=0.2)
+    _n, flat = noise_threshold(np.zeros((64, 64), np.float32), np.ones((64, 64), bool), 5.0, 8.0)
+    assert flat.min() == pytest.approx(8.0)                       # рівний кадр — мінімальний поріг
+
+
+def test_relative_threshold_sees_faint_target_on_clean_sky_but_not_noise(world):
+    """Чисте небо: слабка ціль (+20) видна — фіксований поріг 30 її б пропустив. Шумний кадр (σ 8):
+    поріг піднімається сам — хибних тривог немає."""
+    _scene, model, pano = world
+    det = Detector(DetectionSettings())
+    clean = _blank(world).astype(np.int16)
+    clean[100:102, 200:202] += 20
+    res = det.detect(np.clip(clean, 0, 255).astype(np.uint8), pano, model, 75.0, 28.0)
+    assert len(res.objects) == 1 and res.threshold < 20
+    noisy = (_blank(world) + np.random.default_rng(5).normal(0, 8.0, clean.shape)).clip(0, 255).astype(np.uint8)
+    res = det.detect(noisy, pano, model, 75.0, 28.0)
+    assert res.objects == [] and res.threshold > 30

@@ -3,7 +3,10 @@
 1. Зворотна проєкція: для кожного пікселя кадру — азимут і кут місця → піксель панорами → еталонний кадр.
 2. Суміщення ECC (зсув): прибирає похибку датчика положення.
 3. Нормалізація яскравості; рух — лише пікселі, ЯСКРАВІШІ за еталон більше ніж на поріг (ціль на
-   тепловізорі — яскрава пляма; темніші місця — не ціль).
+   тепловізорі — яскрава пляма; темніші місця — не ціль). Поріг — відносний, від шуму фону: кадр ділиться на
+   8×8 ділянок, у кожній шум — стійкий розкид різниці кадр − еталон (1,4826 × медіанне відхилення);
+   поріг = max(мінімальний поріг, K × шум). Чисте небо — низький поріг (видно слабкі цілі), хмари й марево —
+   вищий (менше хибних тривог); небо і земля на одному кадрі — кожне зі своїм порогом.
 4. Обʼєкт — суцільна (8-звʼязна, без дір) яскрава пляма будь-якої форми площею від «мінімального розміру»
    пікселів (типово 2, тобто більше 1 пікселя); дрібніші, дірчасті й ті, що в мертвих зонах маски, — відкидаються.
 5. Центр кожного обʼєкта → азимут і кут місця за моделлю камери.
@@ -34,7 +37,8 @@ class DetectionSettings:
     solidity_pct: float = 80.0           # суцільність: частка пікселів плями від її площі без дір, %
     max_objects: int = 5                 # не більше стількох обʼєктів на кадрі — найяскравіші
     max_range_m: float = 3000.0          # максимальна дальність (етап 6)
-    diff_threshold: int = 30             # поріг різниці, 0–255
+    sensitivity_k: float = 5.0           # поріг = K × шум фону (менше — чутливіше)
+    min_threshold: int = 8               # поріг не нижчий за це, 0–255 (на ідеально рівному кадрі шум ≈ 0)
     reference_update_min: float = 10.0   # частота оновлення еталона, хв; 0 — не оновлювати
     accuracy_deg: float = 0.5            # критерій точності
     hold_s: float = 5.0                  # час утримання режиму «Виявлення»
@@ -65,8 +69,10 @@ class DetectionSettings:
             e.append("суцільність — 0–100 %")
         if not 1 <= self.max_objects <= 100:
             e.append("найбільше обʼєктів на кадрі — 1–100")
-        if not 0 <= self.diff_threshold <= 255:
-            e.append("поріг різниці — 0–255")
+        if not 1 <= self.sensitivity_k <= 50:
+            e.append("чутливість K — 1–50")
+        if not 1 <= self.min_threshold <= 255:
+            e.append("мінімальний поріг — 1–255")
         if self.reference_update_min < 0:
             e.append("частота оновлення еталона — 0 або більше")
         if not 0 < self.accuracy_deg <= 10:
@@ -150,6 +156,8 @@ class DetectionResult:
     reason: str = ""
     motion_px: int = 0                  # пікселів руху до фільтрації за розміром і маскою
     candidates: List[DetectedObject] = field(default_factory=list)   # усі плями кадру, і ще не підтверджені
+    noise: float = 0.0                  # шум фону (медіана по ділянках), 0–255
+    threshold: float = 0.0              # поріг яскравості (медіана по ділянках) = max(мін. поріг, K × шум)
 
 
 def gray(img: np.ndarray) -> np.ndarray:
@@ -161,6 +169,7 @@ def gray(img: np.ndarray) -> np.ndarray:
 class Detector:
     """Детектор однієї камери. Працює на зменшеному кадрі (ширина ≤ work_width)."""
     PAD = 4
+    BORDER_PX = 4
 
     def __init__(self, settings: DetectionSettings, work_width: int = 1280, edge_tolerance_px: int = 2) -> None:
         self.settings = settings
@@ -241,6 +250,9 @@ class Detector:
         ref = cv2.warpAffine(ref, warp, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         avalid = cv2.warpAffine(valid.astype(np.uint8), warp, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
         avalid = cv2.erode((avalid > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        m = self.BORDER_PX                                       # край кадру — артефакти дисторсії і перерахунку
+        avalid[:m, :] = avalid[-m:, :] = False
+        avalid[:, :m] = avalid[:, -m:] = False
         aligned = cur
         # нормалізація яскравості проти змін освітлення
         if avalid.sum() > 100:
@@ -254,7 +266,9 @@ class Detector:
         r = cv2.GaussianBlur(ref, (3, 3), 0)
         k = np.ones((2 * self.edge_tolerance_px + 1,) * 2, np.uint8)
         diff = aligned - cv2.dilate(r, k)
-        motion = ((diff > self.settings.diff_threshold) & avalid).astype(np.uint8)
+        noise_map, thr = noise_threshold(aligned - r, avalid, self.settings.sensitivity_k,
+                                         float(self.settings.min_threshold))
+        motion = ((diff > thr) & avalid).astype(np.uint8)
         n, labels, stats, cents = cv2.connectedComponentsWithStats(motion, 8)
         px_per_deg = model.f * math.pi / 180.0
         min_area = max(1.0, self.settings.min_area_px * scale * scale)      # площа в пікселях повного кадру
@@ -266,7 +280,7 @@ class Detector:
                 continue
             if min_solid > 0 and area >= 8 and area / _filled_area(labels[y:y + bh, x:x + bw] == i) < min_solid:
                 continue                                     # не суцільна: пляма з дірами (кільце, сітка)
-            if not _stands_out(g, labels, i, x, y, bw, bh, self.settings.diff_threshold / 2.0):
+            if not _stands_out(g, labels, i, x, y, bw, bh, float(thr[int(cents[i][1]), int(cents[i][0])]) / 2.0):
                 continue                                     # не пляма: на кадрі не яскравіша за своє оточення
             uf, vf = float(cents[i][0]), float(cents[i][1])
             # кути — з координат еталона (точка кадру мінус зсув): похибку датчика прибрано
@@ -278,7 +292,40 @@ class Detector:
                                           float(az), float(elv), float(max(bw, bh) / px_per_deg), bright))
         # лише найяскравіші: не більше max_objects, найяскравіша — перша
         objects.sort(key=lambda o: -o.brightness)
-        return DetectionResult(objects[:max(1, self.settings.max_objects)], shift, True, "", int(motion.sum()))
+        return DetectionResult(objects[:max(1, self.settings.max_objects)], shift, True, "", int(motion.sum()),
+                               noise=float(np.median(noise_map)), threshold=float(np.median(thr)))
+
+
+TILES = 8
+
+
+def robust_sigma(values: np.ndarray) -> float:
+    """Стійка оцінка шуму: 1,4826 × медіанне абсолютне відхилення (цілі й краї на неї майже не впливають)."""
+    if values.size == 0:
+        return 0.0
+    med = float(np.median(values))
+    return 1.4826 * float(np.median(np.abs(values - med)))
+
+
+def noise_threshold(d: np.ndarray, valid: np.ndarray, k: float, floor: float,
+                    tiles: int = TILES) -> Tuple[np.ndarray, np.ndarray]:
+    """Шум різниці кадр − еталон по ділянках tiles×tiles і поріг кожного пікселя = max(floor, k × шум ділянки).
+    Ділянка, де мало порівнюваних пікселів, бере шум усього кадру. Повертає (шум ділянок, поріг пікселів)."""
+    import cv2
+
+    h, w = d.shape
+    glob = robust_sigma(d[valid]) if valid.any() else 0.0
+    noise = np.full((tiles, tiles), glob, np.float32)
+    ys = np.linspace(0, h, tiles + 1).astype(int)
+    xs = np.linspace(0, w, tiles + 1).astype(int)
+    for i in range(tiles):
+        for j in range(tiles):
+            m = valid[ys[i]:ys[i + 1], xs[j]:xs[j + 1]]
+            if m.sum() >= 50:
+                noise[i, j] = robust_sigma(d[ys[i]:ys[i + 1], xs[j]:xs[j + 1]][m])
+    thr_tiles = np.maximum(floor, k * noise).astype(np.float32)
+    thr = cv2.resize(thr_tiles, (w, h), interpolation=cv2.INTER_LINEAR)   # плавно між ділянками
+    return noise, thr
 
 
 def _stands_out(img: np.ndarray, labels: np.ndarray, i: int, x: int, y: int, bw: int, bh: int,

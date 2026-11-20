@@ -3,7 +3,8 @@
 Виявлення порівнює кадр з панорамою лише коли камера стоїть. Щоб стежити плавно, без зупинок, обрана ціль
 (найяскравіша пляма) далі шукається просто на кадрі: у вікні навколо місця, де вона має бути (її кути →
 піксель за поточними кутами камери), береться найяскравіша пляма, що виділяється з фону вікна більше за
-поріг. Її кути — за моделлю калібрування камери.
+поріг = max(мінімальний поріг, K × шум вікна) — той самий відносний поріг, що й у виявленні. Її кути — за
+моделлю калібрування камери.
 
 Керування — пропорційне: камера наводиться так, щоб ціль опинилась у центрі камери (центр кіл калібрування),
 зі швидкістю, пропорційною відхиленню: далеко — швидше, ближче до центру — повільніше, без ривків. Відхилення
@@ -46,7 +47,8 @@ class LockOn:
         self.track = track              # номер треку виявлення — той самий ключ для координат цілі
         self.last: Optional[LockResult] = None
 
-    def update(self, img: np.ndarray, model, sensor_az: float, el: float, t: float, threshold: float,
+    def update(self, img: np.ndarray, model, sensor_az: float, el: float, t: float, k: float = 5.0,
+               floor: float = 8.0,
                window_frac: float = 0.08) -> Optional[LockResult]:
         import cv2
 
@@ -61,7 +63,10 @@ class LockOn:
         win = g[y0:y1, x0:x1].astype(np.float32)
         if win.size < 16:
             return None
+        from .detection import robust_sigma
+
         bg = float(np.median(win))
+        threshold = max(floor, k * robust_sigma(win))
         peak = float(win.max())
         if peak - bg <= threshold:
             return None

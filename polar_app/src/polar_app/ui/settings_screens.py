@@ -180,8 +180,11 @@ DETECTION_FIELDS = [
      "Пляма має бути суцільною: частка її пікселів від площі без дір (0 — не перевіряти)"),
     ("max_range_m", "Максимальна дальність виявлення, м", 1, 100000, 100, 0,
      "Цілі, розраховані далі, відкидаються"),
-    ("diff_threshold", "Поріг яскравості, 0–255", 0, 255, 1, 0,
-     "Наскільки піксель кадру має бути яскравішим за панораму, щоб бути частиною цілі"),
+    ("sensitivity_k", "Чутливість K (поріг = K × шум фону)", 1, 50, 0.5, 1,
+     "Піксель — частина цілі, якщо яскравіший за панораму більше ніж на K × шум фону (шум міряється на кожному "
+     "кадрі по ділянках 8×8). Менше K — чутливіше, більше — менше хибних тривог; типово 5"),
+    ("min_threshold", "Мінімальний поріг яскравості, 0–255", 1, 255, 1, 0,
+     "Поріг не нижчий за це, навіть коли шуму майже немає (рівне небо)"),
     ("reference_update_min", "Частота оновлення еталона, хв (0 — не оновлювати)", 0, 1440, 1, 1,
      "Як часто панорама підлаштовується під освітлення"),
     ("accuracy_deg", "Критерій точності, °", 0.01, 10, 0.05, 2,
@@ -229,7 +232,7 @@ class DetectionSettingsScreen(_Screen):
         f = QFormLayout(box)
         self.fields = {}
         for name, label, lo, hi, step, dec, tip in DETECTION_FIELDS:
-            w = QSpinBox() if dec == 0 and name in ("diff_threshold", "confirm_frames", "cue_others", "min_area_px", "min_frames", "max_objects") \
+            w = QSpinBox() if dec == 0 and name in ("min_threshold", "confirm_frames", "cue_others", "min_area_px", "min_frames", "max_objects") \
                 else QDoubleSpinBox()
             w.setRange(lo, hi)
             if isinstance(w, QDoubleSpinBox):
