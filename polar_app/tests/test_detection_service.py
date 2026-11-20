@@ -114,14 +114,14 @@ def test_patrol_suspect_and_follow(ctx):
             seen.add(round(sf.angles.azimuth_deg) % 360)
         return len(seen & {0, 72, 144, 216, 288}) >= 3
     assert wait(30, visits), seen                                       # обходить положення
-    assert "огляд: положення" in cam.patrol_text
+    assert wait(5, lambda: "огляд: положення" in cam.patrol_text), cam.patrol_text
 
     fake = ctx.fake.cams["Камера 1"]
     t0 = time.monotonic()                                              # час імітатора — time.monotonic()
     target = SimTarget((110.0 - 4.0 * t0) % 360.0, 21.0, d_az_deg_s=4.0, size_deg=2.0, brightness=255)
     fake.targets.append(target)
     assert wait(40, lambda: cam.suspect is not None), cam.patrol_text   # рух — підозра, огляд стоїть
-    assert "ПІДОЗРА НА ЦІЛЬ" in cam.patrol_text
+    assert wait(5, lambda: "ПІДОЗРА НА ЦІЛЬ" in cam.patrol_text), cam.patrol_text   # напис — з потоку камери
     assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'suspect'").fetchone()[0] >= 1
     assert wait(40, lambda: cam.patrol.suspect is not None and cam.patrol.suspect.follows >= 1), cam.patrol_text
 
@@ -132,7 +132,8 @@ def test_patrol_suspect_and_follow(ctx):
     assert wait(10, on_target)                                         # камера тримає ціль у кадрі
     sus = cam.patrol.suspect
     assert wait(10, lambda: sus.motion is not None and 2.0 < sus.motion.az_rate < 6.0), sus.motion  # ~4 °/с
-    assert "рух праворуч" in cam.patrol.text() and "через 10 с" in cam.patrol.text()
+    assert wait(5, lambda: "рух праворуч" in cam.patrol.text() and "через 10 с" in cam.patrol.text()), \
+        cam.patrol.text()
     fake.targets.remove(target)
     assert wait(20, lambda: cam.suspect is None and "огляд: положення" in cam.patrol_text)
     assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'patrol'").fetchone()[0] >= 1
