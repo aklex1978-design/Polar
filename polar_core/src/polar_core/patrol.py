@@ -23,7 +23,9 @@ ALERT = "підозра на ціль"
 CUE = "наведення"
 
 ARRIVE_TOL_DEG = 1.5        # камера дійшла до цілі
+STOPPED_AFTER_S = 1.5       # або вже стоїть (відійшла і зупинилась) — напр. сервопривід не добирає частку градуса
 MOVE_TIMEOUT_S = 20.0       # не дійшла (межа, заклинило) — далі однаково
+LEAD_S = 0.5                # стеження: ціль, що рухається, — навестись туди, де вона буде за стільки
 
 
 def patrol_plan(hfov_deg: float, vfov_deg: float, el_min: float, el_max: float, step_frac: float,
@@ -49,10 +51,9 @@ def patrol_plan(hfov_deg: float, vfov_deg: float, el_min: float, el_max: float, 
     return [(wrap360(az + north_offset_deg), el) for az, el in plan]
 
 
-def near_edge(u: float, v: float, width: int, height: int, edge_frac: float) -> bool:
-    """Центр обʼєкта ближче до краю кадру, ніж edge_frac його розміру."""
-    mx, my = width * edge_frac, height * edge_frac
-    return u < mx or u > width - mx or v < my or v > height - my
+def off_center(u: float, v: float, width: int, height: int, center_frac: float) -> bool:
+    """Центр обʼєкта далі від середини кадру, ніж center_frac його ширини (висоти)."""
+    return abs(u - width / 2.0) > width * center_frac or abs(v - height / 2.0) > height * center_frac
 
 
 @dataclass
@@ -89,14 +90,14 @@ class Patroller:
     """Стан огляду однієї камери. update() викликається на кожен кадр і повертає нову ціль камери
     (азимут від півночі, кут місця) або None; ціль після обмеження межами передається в commanded()."""
 
-    def __init__(self, plan: Sequence[Tuple[float, float]], dwell_s: float, hold_s: float, edge_frac: float,
+    def __init__(self, plan: Sequence[Tuple[float, float]], dwell_s: float, hold_s: float, center_frac: float,
                  cyclic: bool = True, window_s: float = 3.0, predict_s: float = 10.0) -> None:
         self.window_s = window_s        # вікно оцінки руху підозри
         self.predict_s = predict_s      # прогноз кутів через стільки секунд
         self.plan = list(plan)
         self.dwell_s = dwell_s
         self.hold_s = hold_s
-        self.edge_frac = edge_frac
+        self.center_frac = center_frac  # стеження: обʼєкт далі від середини кадру — камера наводиться на нього
         self.cyclic = cyclic            # повне коло — по колу; у межах азимуту — туди й назад
         self.state = PATROL
         self.index = 0
@@ -128,6 +129,8 @@ class Patroller:
             return still
         if pose is None or not still:
             return False
+        if t - self._cmd_t >= STOPPED_AFTER_S:
+            return True
         return (abs(wrap180(pose[0] - self.target[0])) <= ARRIVE_TOL_DEG
                 and abs(pose[1] - self.target[1]) <= ARRIVE_TOL_DEG)
 
@@ -241,11 +244,14 @@ class Patroller:
         return None
 
     def _follow(self, o, t: float, frame_size: Tuple[int, int]) -> Optional[Tuple[float, float]]:
+        """Тримати ціль у середині кадру: зійшла з середини — навестись на неї (з упередженням на рух)."""
         w, h = frame_size
-        if w and h and near_edge(o.u, o.v, w, h, self.edge_frac):
-            self.suspect.follows += 1
-            return self._issue((wrap360(o.az), o.el), t)
-        return None
+        if not (w and h and off_center(o.u, o.v, w, h, self.center_frac)):
+            return None
+        self.suspect.follows += 1
+        m = self.suspect.motion
+        az, el = m.predict(LEAD_S) if m is not None else (o.az, o.el)
+        return self._issue((wrap360(az), el), t)
 
     # --- для екранів ------------------------------------------------------------------------
     def text(self) -> str:

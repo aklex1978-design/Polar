@@ -222,7 +222,7 @@ class DetectionService:
                    and cfg.pan.max_deg - cfg.pan.min_deg < 360.0)
         plan = patrol_plan(model.hfov_deg, model.vfov_deg, el_lo, el_hi, s.patrol_step_pct / 100.0,
                            rec.north_offset_deg, (cfg.pan.min_deg, cfg.pan.max_deg) if limited else None)
-        return Patroller(plan, s.patrol_dwell_s, max(1.0, s.hold_s), s.follow_edge_pct / 100.0,
+        return Patroller(plan, s.patrol_dwell_s, max(1.0, s.hold_s), s.follow_center_pct / 100.0,
                          cyclic=not limited, window_s=s.motion_window_s, predict_s=s.predict_s)
 
     def _patrol(self, rec, cam: CameraDetection, sf, pose, still: bool, res) -> None:

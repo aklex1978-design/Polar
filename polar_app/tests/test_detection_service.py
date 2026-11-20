@@ -99,7 +99,7 @@ def test_patrol_suspect_and_follow(ctx):
     with ctx.control._db_lock:
         save_settings(ctx.conn, DetectionSettings(hold_s=1.5, reference_update_min=0, patrol_dwell_s=0.5,
                                                   patrol_el_min_deg=20, patrol_el_max_deg=20, patrol_step_pct=80,
-                                                  follow_edge_pct=25))
+                                                  follow_center_pct=10))
     with ctx.control._db_lock:
         save_mask(ctx.conn, ctx.records()[0].id, DetectionMask([]))
     assert ctx.detection.start() == ["Камера 1"]

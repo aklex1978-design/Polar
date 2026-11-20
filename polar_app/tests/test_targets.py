@@ -207,7 +207,7 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         with c.control._db_lock:
             save_settings(c.conn, DetectionSettings(hold_s=3.0, reference_update_min=0, patrol_dwell_s=0.5,
                                                     patrol_el_min_deg=round(min(els)), patrol_el_max_deg=round(min(els)),
-                                                    follow_edge_pct=10, cue_others=1, cue_min_range_m=50))
+                                                    follow_center_pct=10, cue_others=1, cue_min_range_m=50))
             c.conn.execute("DELETE FROM targets")
         old = {r.name: opts["open_factory"].cams.get(r.name) for r in recs}
         assert sorted(c.detection.start()) == sorted(r.name for r in recs)

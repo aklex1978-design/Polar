@@ -3,7 +3,7 @@ from types import SimpleNamespace as Obj
 
 import pytest
 
-from polar_core.patrol import ALERT, PATROL, Patroller, near_edge, patrol_plan
+from polar_core.patrol import ALERT, PATROL, Patroller, off_center, patrol_plan
 
 
 def obj(az, el, u, v, area=100.0):
@@ -21,9 +21,10 @@ def test_plan_full_circle_and_limits():
     assert all(60.0 - 1e-6 <= a <= 200.0 + 1e-6 for a in azs)
 
 
-def test_near_edge():
-    assert near_edge(10, 240, 640, 480, 0.2) and near_edge(600, 240, 640, 480, 0.2)
-    assert not near_edge(320, 240, 640, 480, 0.2) and not near_edge(10, 240, 640, 480, 0.0)
+def test_off_center():
+    assert off_center(10, 240, 640, 480, 0.2) and off_center(600, 240, 640, 480, 0.2)
+    assert off_center(320, 400, 640, 480, 0.2)
+    assert not off_center(320, 240, 640, 480, 0.2) and not off_center(400, 250, 640, 480, 0.2)
 
 
 def step(p, t, pose, still=True, compared=True, objects=()):
@@ -31,7 +32,7 @@ def step(p, t, pose, still=True, compared=True, objects=()):
 
 
 def test_patrol_dwells_then_moves_and_bounces_in_limits():
-    p = Patroller([(0, 10), (50, 10), (100, 10)], dwell_s=2.0, hold_s=3.0, edge_frac=0.2, cyclic=False)
+    p = Patroller([(0, 10), (50, 10), (100, 10)], dwell_s=2.0, hold_s=3.0, center_frac=0.2, cyclic=False)
     assert step(p, 0.0, (300, 0), still=False) == (0, 10)             # перше положення
     assert step(p, 0.5, (150, 5), still=False) is None                 # ще йде
     assert step(p, 1.0, (0.5, 10)) is None                              # дійшла — огляд
@@ -49,7 +50,7 @@ def test_patrol_dwells_then_moves_and_bounces_in_limits():
 
 
 def test_motion_stops_patrol_follows_edge_and_resumes():
-    p = Patroller([(0, 10), (50, 10)], dwell_s=2.0, hold_s=3.0, edge_frac=0.2)
+    p = Patroller([(0, 10), (50, 10)], dwell_s=2.0, hold_s=3.0, center_frac=0.2)
     step(p, 0.0, (0, 10))
     step(p, 0.1, (0, 10))
     assert step(p, 1.0, (0, 10), objects=[obj(5, 12, 400, 200)]) is None   # рух у центрі — стоїть, підозра
@@ -65,7 +66,7 @@ def test_motion_stops_patrol_follows_edge_and_resumes():
 
 
 def test_objects_while_moving_ignored():
-    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=3.0, edge_frac=0.2)
+    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=3.0, center_frac=0.2)
     step(p, 0.0, (0, 10))
     assert step(p, 0.5, (40, 10), still=False, objects=[obj(40, 10, 320, 240)]) is None
     assert p.state == PATROL
@@ -73,7 +74,7 @@ def test_objects_while_moving_ignored():
 
 def test_cue_search_point_and_release():
     from polar_core.patrol import CUE, Cue
-    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=2.0, edge_frac=0.2)
+    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=2.0, center_frac=0.2)
     step(p, 0.0, (0, 10))
     step(p, 0.1, (0, 10))
     p.cue(Cue("search", [(100, 5), (110, 6), (120, 7)], "променю «Камера 1»", ("search", "Камера 1")))
@@ -105,9 +106,45 @@ def test_cue_search_point_and_release():
 
 def test_cue_release_returns_to_patrol():
     from polar_core.patrol import Cue
-    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=2.0, edge_frac=0.2)
+    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=2.0, center_frac=0.2)
     step(p, 0.0, (0, 10))
     p.cue(Cue("search", [(100, 5)], "x", ("search", "A")))
     assert step(p, 0.1, (0, 10)) == (100, 5)
     p.cue(None)
     assert step(p, 0.2, (50, 5), still=False) == (0, 10) and p.state == PATROL
+
+
+def test_keeps_target_in_center():
+    """Ціль зійшла з середини кадру (понад допуск) — камера наводиться на неї; у допуску — стоїть."""
+    p = Patroller([(0, 10), (90, 10)], dwell_s=1.0, hold_s=3.0, center_frac=0.1)
+    step(p, 0.0, (0, 10))
+    assert step(p, 0.1, (0, 10), objects=[obj(2, 11, 350, 250)]) is None          # у допуску (30 px з 64)
+    assert p.state == ALERT
+    assert step(p, 0.2, (0, 10), objects=[obj(6, 11, 420, 250)]) == (6, 11)       # 100 px від середини
+    assert step(p, 0.4, (3, 10), still=False) is None
+    assert step(p, 2.5, (6, 11), objects=[obj(6.2, 11, 325, 240)]) is None        # ціль у середині — стоїть
+    assert p.state == ALERT and p.suspect.follows == 1
+
+
+def test_arrives_when_servo_stops_short_of_target():
+    """Сервопривід не добрав 1,8° (люфт, навантаження) — камера стоїть, отже дійшла: рух аналізується,
+    огляд не йде далі."""
+    p = Patroller([(0, 10), (50, 10)], dwell_s=1.0, hold_s=3.0, center_frac=0.2)
+    step(p, 0.0, (0, 10))
+    step(p, 0.1, (0, 10))
+    assert step(p, 1.2, (0, 10)) == (50, 10)
+    assert step(p, 1.5, (25, 10), still=False) is None
+    assert step(p, 2.0, (48.2, 10), objects=[obj(48, 10, 320, 240)]) is None       # ще може доїхати — чекає
+    assert p.state == PATROL
+    assert step(p, 2.8, (48.2, 10), objects=[obj(48, 10, 320, 240)]) is None       # стоїть 1,5 с — дійшла
+    assert p.state == ALERT
+
+
+def test_follow_leads_moving_target():
+    p = Patroller([(0, 10)], dwell_s=1.0, hold_s=3.0, center_frac=0.1)
+    step(p, 0.0, (0, 10))
+    for i in range(6):                                          # ціль іде праворуч 2 °/с, ще в допуску
+        t = 0.1 + i * 0.1
+        step(p, t, (0, 10), objects=[obj(0.2 * i, 10, 320 + 2 * i, 240)])
+    target = step(p, 0.8, (0, 10), objects=[obj(1.4, 10, 420, 240)])               # вийшла з допуску
+    assert target is not None and target[0] == pytest.approx(1.4 + 2.0 * 0.5, abs=0.2)   # з упередженням
