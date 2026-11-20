@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -137,7 +137,7 @@ class DetectionService:
         name = rec.name
         cam = self.cams[name]
         det = Detector(self.settings)
-        tracker = Tracker(gate_deg=max(1.0, 4 * self.settings.min_size_deg), lost_s=max(1.0, self.settings.hold_s))
+        tracker = Tracker(gate_deg=2.0, lost_s=max(1.0, self.settings.hold_s), min_frames=self.settings.min_frames)
         model = None
         mask_ver = None
         mask = None
@@ -187,6 +187,8 @@ class DetectionService:
                              moving=sf.angles.moving, pano_key=(id(pano), ver))
             now = self._clock()
             pairs, new = tracker.update(res.objects, sf.t) if res.compared else ([], [])
+            if res.compared:            # далі — лише обʼєкти, що є на min_frames кадрах поспіль
+                res = replace(res, objects=[o for _tr, o in pairs], candidates=res.objects)
             if res.compared:
                 self.targets.offer(rec, pairs, sf.t)
             else:
@@ -197,7 +199,8 @@ class DetectionService:
                 cam.frames += 1
                 cam.state = ("камера рухається" if not res.compared and res.reason == "камера рухається"
                              else (res.reason if not res.compared else
-                                   (f"обʼєктів: {len(res.objects)}" if res.objects else "руху немає")))
+                                   (f"обʼєктів: {len(res.objects)}" if res.objects else
+                                    (f"перевірка плям: {len(res.candidates)}" if res.candidates else "руху немає"))))
             cam.latency.record(rec.video_latency_ms + (now - sf.t) * 1000.0, True)
             self._save(rec, pairs, new, sf.t)
             self._maybe_update_reference(rec, cam, res, sf, model)
@@ -276,7 +279,7 @@ class DetectionService:
         if every <= 0 or not res.compared or self._clock() - cam.last_reference_update < every:
             return
         exclude = np.zeros(sf.image.shape[:2], bool)
-        for o in res.objects:
+        for o in res.candidates or res.objects:
             x0, y0 = int(o.u - o.w), int(o.v - o.h)
             exclude[max(0, y0): int(o.v + o.h) + 1, max(0, x0): int(o.u + o.w) + 1] = True
         self.ctx.learning.update_reference(rec.name, sf.image, model, sf.angles.azimuth_deg,

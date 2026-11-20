@@ -80,7 +80,7 @@ while not ctx.detection.active and time.monotonic() < end:
 ctx.control.go_to(rec0.name, 75.0, 25.0, source="learning")
 pump(2.5)
 from polar_core.sim import SimTarget  # noqa: E402
-opts["open_factory"].cams[rec0.name].targets.append(SimTarget(83.0, 30.0, size_deg=1.5, brightness=0))
+opts["open_factory"].cams[rec0.name].targets.append(SimTarget(83.0, 30.0, size_deg=1.5, brightness=255))
 pump(2.5)
 win.stack.setCurrentWidget(win.grid)
 pump(2.0)

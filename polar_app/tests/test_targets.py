@@ -178,7 +178,7 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
             pos = GeoPoint(r.latitude, r.longitude, r.altitude_m)
             az, el, _ = bearing_elevation(frame, pos, target)
             c.control.go_to(r.name, az + 3.0, el - 2.0, source="learning")       # ціль — не в центрі кадру
-            opts["open_factory"].cams[r.name].targets.append(SimTarget(az, el, size_deg=1.2, brightness=0))
+            opts["open_factory"].cams[r.name].targets.append(SimTarget(az, el, size_deg=1.2, brightness=255))
         assert wait(25, lambda: c.detection.targets.targets)
         tt = next(iter(c.detection.targets.targets.values()))
         err = float((frame.to_enu(tt.geo) - frame.to_enu(target)) @ (frame.to_enu(tt.geo) - frame.to_enu(target))) ** 0.5
@@ -215,14 +215,14 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         assert wait(10, lambda: all(opts["open_factory"].cams.get(r.name) is not old[r.name] for r in recs))
         a_name, b_name = recs[0].name, recs[1].name
         # спершу ціль бачить лише камера A (відео перепідключено — нові камери імітатора)
-        opts["open_factory"].cams[a_name].targets[:] = [SimTarget(*sims[a_name], size_deg=1.2, brightness=0)]
+        opts["open_factory"].cams[a_name].targets[:] = [SimTarget(*sims[a_name], size_deg=1.2, brightness=255)]
         cam_a, cam_b = c.detection.camera(a_name), c.detection.camera(b_name)
-        assert wait(60, lambda: cam_a.suspect is not None), cam_a.patrol_text
+        assert wait(60, lambda: cam_a.suspect is not None), (cam_a.patrol_text, cam_b.patrol_text)
         assert wait(10, lambda: cam_b.patrol.state == CUE), cam_b.patrol_text       # B шукає по променю A
         assert "НАВЕДЕННЯ: пошук по променю «" + a_name in cam_b.patrol_text
         with c.control._db_lock:
             assert c.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'cue'").fetchone()[0] >= 1
-        opts["open_factory"].cams[b_name].targets[:] = [SimTarget(*sims[b_name], size_deg=1.2, brightness=0)]
+        opts["open_factory"].cams[b_name].targets[:] = [SimTarget(*sims[b_name], size_deg=1.2, brightness=255)]
         assert wait(60, lambda: c.detection.targets.targets), (cam_a.patrol_text, cam_b.patrol_text)
         tt = next(iter(c.detection.targets.targets.values()))
         err = float(np.linalg.norm(frame.to_enu(tt.geo) - frame.to_enu(target)))

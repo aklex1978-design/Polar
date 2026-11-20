@@ -2,16 +2,21 @@
 
 1. Зворотна проєкція: для кожного пікселя кадру — азимут і кут місця → піксель панорами → еталонний кадр.
 2. Суміщення ECC (зсув): прибирає похибку датчика положення.
-3. Нормалізація яскравості, різниця, поріг, морфологічна фільтрація.
-4. Контури; відкидаються дрібніші за мінімальний розмір і ті, що в мертвих зонах маски.
+3. Нормалізація яскравості; рух — лише пікселі, ЯСКРАВІШІ за еталон більше ніж на поріг (ціль на
+   тепловізорі — яскрава пляма; темніші місця — не ціль).
+4. Обʼєкт — суцільна (8-звʼязна, без дір) яскрава пляма будь-якої форми площею від «мінімального розміру»
+   пікселів (типово 2, тобто більше 1 пікселя); дрібніші, дірчасті й ті, що в мертвих зонах маски, — відкидаються.
 5. Центр кожного обʼєкта → азимут і кут місця за моделлю камери.
-Порівняння — лише коли камера стоїть.
+6. Ціллю обʼєкт стає, лише коли він є щонайменше на «мінімальній кількості кадрів» поспіль (Tracker):
+   одиночні спалахи шуму відкидаються.
+Порівняння — лише коли камера стоїть. Кадр обробляється без згладжування і, до ширини 1280, у повній
+роздільності — щоб пляма у 2 пікселі не розмилась.
 """
 from __future__ import annotations
 
 import math
 import sqlite3
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -24,7 +29,9 @@ from .projection import CameraModel
 @dataclass
 class DetectionSettings:
     """«Налаштування / Виявлення» (зберігаються в settings з префіксом detection.)."""
-    min_size_deg: float = 0.3            # мінімальний розмір обʼєкта, °
+    min_area_px: int = 2                 # мінімальний розмір обʼєкта — площа, пікселів кадру (> 1 пікселя)
+    min_frames: int = 2                  # обʼєкт має бути щонайменше на стількох кадрах поспіль
+    solidity_pct: float = 80.0           # суцільність: частка пікселів плями від її площі без дір, %
     max_range_m: float = 3000.0          # максимальна дальність (етап 6)
     diff_threshold: int = 30             # поріг різниці, 0–255
     reference_update_min: float = 10.0   # частота оновлення еталона, хв; 0 — не оновлювати
@@ -49,8 +56,12 @@ class DetectionSettings:
 
     def validate(self) -> List[str]:
         e = []
-        if not 0 < self.min_size_deg <= 30:
-            e.append("мінімальний розмір обʼєкта — 0–30°")
+        if not 1 <= self.min_area_px <= 100000:
+            e.append("мінімальний розмір обʼєкта — від 1 пікселя")
+        if not 1 <= self.min_frames <= 100:
+            e.append("мінімальна кількість кадрів — 1–100")
+        if not 0 <= self.solidity_pct <= 100:
+            e.append("суцільність — 0–100 %")
         if not 0 <= self.diff_threshold <= 255:
             e.append("поріг різниці — 0–255")
         if self.reference_update_min < 0:
@@ -134,6 +145,7 @@ class DetectionResult:
     compared: bool = True
     reason: str = ""
     motion_px: int = 0                  # пікселів руху до фільтрації за розміром і маскою
+    candidates: List[DetectedObject] = field(default_factory=list)   # усі плями кадру, і ще не підтверджені
 
 
 def gray(img: np.ndarray) -> np.ndarray:
@@ -146,7 +158,7 @@ class Detector:
     """Детектор однієї камери. Працює на зменшеному кадрі (ширина ≤ work_width)."""
     PAD = 4
 
-    def __init__(self, settings: DetectionSettings, work_width: int = 640, edge_tolerance_px: int = 2) -> None:
+    def __init__(self, settings: DetectionSettings, work_width: int = 1280, edge_tolerance_px: int = 2) -> None:
         self.settings = settings
         self.work_width = work_width
         self.edge_tolerance_px = edge_tolerance_px
@@ -220,44 +232,75 @@ class Detector:
             shift = (float(warp[0, 2]), float(warp[1, 2]))
         except cv2.error:
             pass
-        aligned = cv2.warpAffine(cur, warp, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
-                                 borderMode=cv2.BORDER_REPLICATE)
-        avalid = cv2.warpAffine(valid.astype(np.uint8), warp, (w, h), flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
-                                borderValue=0)
+        # кадр не перетягується (інтерполяція розмила б пляму в 2 пікселі) — зсувається гладкий еталон:
+        # точка x еталона лягає на x + зсув кадру
+        ref = cv2.warpAffine(ref, warp, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        avalid = cv2.warpAffine(valid.astype(np.uint8), warp, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
         avalid = cv2.erode((avalid > 0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        aligned = cur
         # нормалізація яскравості проти змін освітлення
         if avalid.sum() > 100:
             mr, sr = ref[avalid].mean(), ref[avalid].std() + 1e-3
             mc, sc = aligned[avalid].mean(), aligned[avalid].std() + 1e-3
             aligned = (aligned - mc) * (sr / sc) + mr
-        # різниця з допуском у сусідстві: піксель — рух, лише якщо він виходить за межі еталона в
-        # околі ±tol px. Так різкі краї (дахи, дроти) не дають хибних спрацювань через субпіксельне
-        # зміщення між кадром і панорамою, а суцільний обʼєкт усередині себе різницю зберігає.
-        a = cv2.GaussianBlur(aligned, (3, 3), 0)
+        # яскравіше за еталон з допуском у сусідстві: піксель — рух, лише якщо він яскравіший за НАЙЯСКРАВІШИЙ
+        # піксель еталона в околі ±tol px. Так різкі краї (дахи, дроти) не дають хибних спрацювань через
+        # субпіксельне зміщення між кадром і панорамою. Кадр не згладжується — пляма в 2 пікселі зберігається;
+        # еталон (панорама) і так гладкий.
         r = cv2.GaussianBlur(ref, (3, 3), 0)
         k = np.ones((2 * self.edge_tolerance_px + 1,) * 2, np.uint8)
-        diff = np.maximum(np.maximum(a - cv2.dilate(r, k), cv2.erode(r, k) - a), 0)
+        diff = aligned - cv2.dilate(r, k)
         motion = ((diff > self.settings.diff_threshold) & avalid).astype(np.uint8)
-        motion = cv2.morphologyEx(motion, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-        motion = cv2.morphologyEx(motion, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         n, labels, stats, cents = cv2.connectedComponentsWithStats(motion, 8)
         px_per_deg = model.f * math.pi / 180.0
-        min_px = max(1.0, self.settings.min_size_deg * px_per_deg)
+        min_area = max(1.0, self.settings.min_area_px * scale * scale)      # площа в пікселях повного кадру
+        min_solid = self.settings.solidity_pct / 100.0
         objects = []
         for i in range(1, n):
             x, y, bw, bh, area = stats[i]
-            if max(bw, bh) < min_px or area < max(2.0, (min_px * min_px) * 0.3):
+            if area < min_area:
                 continue
-            cu, cv_ = cents[i]
-            # суміщений кадр — у координатах еталона, тож кути беремо звідти (похибку датчика прибрано);
-            # на самому кадрі обʼєкт зсунутий на знайдений зсув
-            az, elv = model.pixel_to_angles(cu, cv_, sensor_az, el)
+            if min_solid > 0 and area >= 8 and area / _filled_area(labels[y:y + bh, x:x + bw] == i) < min_solid:
+                continue                                     # не суцільна: пляма з дірами (кільце, сітка)
+            if not _stands_out(g, labels, i, x, y, bw, bh, self.settings.diff_threshold / 2.0):
+                continue                                     # не пляма: на кадрі не яскравіша за своє оточення
+            uf, vf = float(cents[i][0]), float(cents[i][1])
+            # кути — з координат еталона (точка кадру мінус зсув): похибку датчика прибрано
+            az, elv = model.pixel_to_angles(uf - shift[0], vf - shift[1], sensor_az, el)
             if mask is not None and mask.is_dead(az, elv):
                 continue
-            uf, vf = cu + shift[0], cv_ + shift[1]
             objects.append(DetectedObject(uf / scale, vf / scale, bw / scale, bh / scale, float(area) / scale ** 2,
                                           float(az), float(elv), float(max(bw, bh) / px_per_deg)))
         return DetectionResult(objects, shift, True, "", int(motion.sum()))
+
+
+def _stands_out(img: np.ndarray, labels: np.ndarray, i: int, x: int, y: int, bw: int, bh: int,
+                margin: float, ring_px: int = 2) -> bool:
+    """Пляма яскравіша за своє оточення на самому кадрі (кільце ring_px навколо неї, 75-й перцентиль).
+    Так відкидаються «смужки» неба на краях будинків і хмар через неточне суміщення з панорамою:
+    вони яскравіші за еталон, але не за сусідні пікселі кадру."""
+    import cv2
+
+    h, w = labels.shape
+    x0, y0 = max(0, x - ring_px), max(0, y - ring_px)
+    x1, y1 = min(w, x + bw + ring_px), min(h, y + bh + ring_px)
+    blob = labels[y0:y1, x0:x1] == i
+    ring = cv2.dilate(blob.astype(np.uint8), np.ones((2 * ring_px + 1,) * 2, np.uint8)).astype(bool) & ~blob
+    if not ring.any():
+        return True
+    patch = img[y0:y1, x0:x1].astype(np.float32)
+    return float(patch[blob].mean()) - float(np.percentile(patch[ring], 75)) > margin
+
+
+def _filled_area(blob: np.ndarray) -> float:
+    """Площа плями разом із дірами всередині (зовнішній контур, залитий)."""
+    import cv2
+
+    pad = np.pad(blob.astype(np.uint8), 1)
+    contours, _h = cv2.findContours(pad, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    filled = np.zeros_like(pad)
+    cv2.drawContours(filled, contours, -1, 1, thickness=cv2.FILLED)
+    return float(max(1, int(filled.sum())))
 
 
 @dataclass
@@ -269,20 +312,25 @@ class Track:
     last_t: float
     hits: int = 1
     last_saved_t: float = -1e9
+    streak: int = 1             # кадрів поспіль з обʼєктом
+    confirmed: bool = False     # набрав мінімальну кількість кадрів поспіль — ціль
 
 
 class Tracker:
-    """Супровід обʼєктів між кадрами, щоб один обʼєкт не створював сотні подій: найближчий трек у межах
-    gate_deg продовжується, решта — нові треки; трек зникає, якщо не бачили довше lost_s."""
+    """Супровід обʼєктів між кадрами: найближчий трек у межах gate_deg продовжується, решта — нові треки;
+    трек зникає, якщо не бачили довше lost_s. Обʼєкт стає ціллю (confirmed), коли він є на min_frames
+    кадрах поспіль; до того його не видно ні в подіях, ні в режимах — одиночні спалахи шуму відкидаються."""
 
-    def __init__(self, gate_deg: float = 3.0, lost_s: float = 2.0) -> None:
+    def __init__(self, gate_deg: float = 3.0, lost_s: float = 2.0, min_frames: int = 1) -> None:
         self.gate_deg = gate_deg
         self.lost_s = lost_s
+        self.min_frames = max(1, min_frames)
         self.tracks: List[Track] = []
         self._next = 1
 
     def update(self, objects: List[DetectedObject], t: float) -> Tuple[List[Tuple[Track, DetectedObject]], List[Track]]:
-        """Повертає (пари трек–обʼєкт цього кадру, нові треки)."""
+        """Кадр, порівняний з панорамою. Повертає (пари підтверджений трек–обʼєкт цього кадру,
+        треки, підтверджені саме на цьому кадрі)."""
         from .angles import angular_distance
 
         pairs, new = [], []
@@ -293,13 +341,19 @@ class Tracker:
                 free.remove(best)
                 best.az, best.el, best.last_t = o.az, o.el, t
                 best.hits += 1
-                pairs.append((best, o))
+                best.streak += 1
+                tr = best
             else:
                 tr = Track(self._next, o.az, o.el, t, t)
                 self._next += 1
                 self.tracks.append(tr)
+            if not tr.confirmed and tr.streak >= self.min_frames:
+                tr.confirmed = True
                 new.append(tr)
+            if tr.confirmed:
                 pairs.append((tr, o))
+        for tr in free:                                      # на цьому кадрі обʼєкта немає — серія переривається
+            tr.streak = 0
         self.tracks = [tr for tr in self.tracks if t - tr.last_t <= self.lost_s]
         return pairs, new
 

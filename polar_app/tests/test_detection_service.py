@@ -62,7 +62,7 @@ def test_learning_switches_to_tracking(ctx):
 
 def test_target_switches_to_detection_and_back(ctx):
     cam = ctx.fake.cams["Камера 1"]
-    target = SimTarget(66.0, 24.0, size_deg=1.5, brightness=0)
+    target = SimTarget(66.0, 24.0, size_deg=1.5, brightness=255)
     cam.targets.append(target)
     assert wait(6, lambda: ctx.detection.mode.mode == DETECTION)
     objs = ctx.detection.camera("Камера 1").result.objects
@@ -84,7 +84,7 @@ def test_dead_zone_ignored(ctx):
         save_mask(ctx.conn, cid, m)
     time.sleep(2.5)                                                       # маску перечитує раз на 2 с
     cam = ctx.fake.cams["Камера 1"]
-    target = SimTarget(66.0, 24.0, size_deg=1.5, brightness=0)
+    target = SimTarget(66.0, 24.0, size_deg=1.5, brightness=255)
     cam.targets.append(target)
     time.sleep(3.0)
     assert ctx.detection.mode.mode == TRACKING
@@ -118,7 +118,7 @@ def test_patrol_suspect_and_follow(ctx):
 
     fake = ctx.fake.cams["Камера 1"]
     t0 = time.monotonic()                                              # час імітатора — time.monotonic()
-    target = SimTarget((110.0 - 4.0 * t0) % 360.0, 21.0, d_az_deg_s=4.0, size_deg=2.0, brightness=0)
+    target = SimTarget((110.0 - 4.0 * t0) % 360.0, 21.0, d_az_deg_s=4.0, size_deg=2.0, brightness=255)
     fake.targets.append(target)
     assert wait(40, lambda: cam.suspect is not None), cam.patrol_text   # рух — підозра, огляд стоїть
     assert "ПІДОЗРА НА ЦІЛЬ" in cam.patrol_text
