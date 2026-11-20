@@ -219,7 +219,7 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         cam_a, cam_b = c.detection.camera(a_name), c.detection.camera(b_name)
         assert wait(60, lambda: cam_a.suspect is not None), (cam_a.patrol_text, cam_b.patrol_text)
         assert wait(10, lambda: cam_b.patrol.state == CUE), cam_b.patrol_text       # B шукає по променю A
-        assert "НАВЕДЕННЯ: пошук по променю «" + a_name in cam_b.patrol_text
+        assert wait(5, lambda: "НАВЕДЕННЯ: пошук по променю «" + a_name in cam_b.patrol_text), cam_b.patrol_text
         with c.control._db_lock:
             assert c.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'cue'").fetchone()[0] >= 1
         opts["open_factory"].cams[b_name].targets[:] = [SimTarget(*sims[b_name], size_deg=1.2, brightness=255)]
