@@ -61,6 +61,8 @@ class CameraView(QWidget):
         self.landmarks: List[Tuple[float, float]] = []
         self.text_lines: List[str] = []
         self.boxes: List[Tuple[float, float, float, float]] = []     # знайдені обʼєкти (u, v, w, h)
+        # ймовірні цілі — пунктирні квадрати (u, v, w, h, колір, підпис) у пікселях кадру
+        self.marks: List[Tuple[float, float, float, float, QColor, str]] = []
         self.interactive = True
         self._drag = False
 
@@ -114,6 +116,28 @@ class CameraView(QWidget):
         self.center_moved.emit(u, v)
 
     # --- малювання ------------------------------------------------------------------------
+    def _paint_marks(self, p: QPainter, r: QRectF) -> None:
+        """Ймовірні цілі: пунктирний квадрат навколо плями (не менше 18 px на екрані) і підпис над ним."""
+        if not self.marks:
+            return
+        p.save()
+        p.setClipRect(r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        scale = r.width() / self.frame_size[0]
+        for u, v, w, h, color, label in self.marks:
+            c = self.to_widget(u, v)
+            side = max(18.0, max(w, h) * scale + 12.0)
+            box = QRectF(c.x() - side / 2, c.y() - side / 2, side, side)
+            p.setPen(QPen(QColor(0, 0, 0, 160), 4))               # тінь — видно і на світлому фоні
+            p.drawRect(box)
+            pen = QPen(color, 2, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawRect(box)
+            if label:
+                p.setPen(color)
+                p.drawText(QPointF(box.left(), box.top() - 4), label)
+        p.restore()
+
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -125,6 +149,7 @@ class CameraView(QWidget):
             p.setPen(QColor("#bbbbbb"))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Немає кадру")
         if self.model is None:
+            self._paint_marks(p, r)
             if self.text_lines:                      # напр. «Немає звʼязку · останній кадр …»
                 p.setPen(QColor("#ff9f0a"))
                 for i, line in enumerate(self.text_lines):
@@ -175,6 +200,7 @@ class CameraView(QWidget):
         for u, v, w, h in self.boxes:
             a, b = self.to_widget(u - w / 2 - 3, v - h / 2 - 3), self.to_widget(u + w / 2 + 3, v + h / 2 + 3)
             p.drawRect(QRectF(a, b))
+        self._paint_marks(p, r)
         # центр камери — перехрестя
         p.setPen(QPen(CENTER_COLOR, 2))
         p.drawLine(QPointF(c.x() - 16, c.y()), QPointF(c.x() + 16, c.y()))

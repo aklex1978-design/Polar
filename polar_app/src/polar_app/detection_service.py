@@ -36,6 +36,7 @@ class CameraDetection:
     frame_index: int = -1
     frame_t: float = 0.0
     tracks: List = field(default_factory=list)
+    marks: List = field(default_factory=list)     # (номер треку, DetectedObject) — обʼєкти останнього кадру
     latency: Optional[LatencyMonitor] = None
     last_reference_update: float = 0.0
     frames: int = 0
@@ -196,6 +197,7 @@ class DetectionService:
             with self._lock:
                 cam.result, cam.frame_index, cam.frame_t = res, sf.index, sf.t
                 cam.tracks = list(tracker.tracks)
+                cam.marks = [(tr.id, o) for tr, o in pairs]
                 cam.frames += 1
                 cam.state = ("камера рухається" if not res.compared and res.reason == "камера рухається"
                              else (res.reason if not res.compared else

@@ -568,6 +568,34 @@ def test_work_screen_targets_table(win):
     assert w.targets.item(0, 1).text() == "№1" and w.targets.item(0, 5).text() == "50.451500"
     assert float(w.targets.item(1, 7).text()) == pytest.approx(450.0, abs=0.2)
     assert w.targets.item(2, 0).text() == recs[2].name and w.targets.item(2, 3).text() == ""
+    # відео камер: ймовірні цілі — пунктирні квадрати; ціль з координатами — світло-червоний, підозра — жовтий
+    from polar_app.detection_service import CameraDetection
+    from polar_app.ui.work_screen import SUSPECT_COLOR, TARGET_COLOR
+    det = win.ctx.detection
+    assert set(w.views) == {r.name for r in recs}
+    obj = NS(u=320.0, v=180.0, w=4.0, h=3.0)
+    now = time.monotonic()
+    det.cams[recs[0].name] = CameraDetection(frame_t=now, marks=[(1, obj)])          # трек 1 — у цілі №1
+    det.cams[recs[2].name] = CameraDetection(frame_t=now, marks=[(7, obj)])          # лише ця камера — підозра
+    w.refresh_views()
+    m0, m2 = w.views[recs[0].name].marks, w.views[recs[2].name].marks
+    assert [(c, label) for *_xy, c, label in m0] == [(TARGET_COLOR, "ціль №1")]
+    assert [(c, label) for *_xy, c, label in m2] == [(SUSPECT_COLOR, "підозра")]
+    assert w.views[recs[1].name].marks == []
+    view = w.views[recs[2].name]
+    img = view.grab().toImage()
+    k = img.devicePixelRatio()
+    c = view.to_widget(320.0, 180.0)
+    left = c.x() - max(18.0, 4.0 * view._rect().width() / view.frame_size[0] + 12.0) / 2
+
+    def yellow(x, y):
+        q = img.pixelColor(int(x * k), int(y * k))
+        return q.red() > 200 and q.green() > 170 and q.blue() < 90
+    assert any(yellow(left + dx, c.y() + dy) for dx in (-1, 0, 1) for dy in range(-8, 9))   # жовта рамка
+    det.cams[recs[2].name] = CameraDetection(frame_t=now - 5.0, marks=[(7, obj)])    # застаріле — не показувати
+    w.refresh_views()
+    assert w.views[recs[2].name].marks == []
+    det.cams.clear()
     win.ctx.detection.mode.stop()
     svc.stop()
 

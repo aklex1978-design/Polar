@@ -220,6 +220,16 @@ class TargetService:
                         "WHERE id = ?", vals + (tt.db_id,))
 
     # --- для наведення камер -------------------------------------------------------------------------
+    def target_numbers(self, camera: str) -> Dict[Hashable, int]:
+        """Номери підтверджених цілей (з координатами) для треків цієї камери: {трек: номер цілі}."""
+        with self._lock:
+            out = {}
+            for tt in self.targets.values():
+                for r in tt.target.rays:
+                    if r.camera == camera:
+                        out[r.obj] = tt.number
+            return out
+
     def position(self, name: str) -> Optional[GeoPoint]:
         return self._positions.get(name)
 
