@@ -42,7 +42,12 @@ class AppContext:
             return cm.get_camera(self.conn, camera_id)
 
     def records(self):
+        """Усі камери, і неактивні (список, форма, журнал)."""
         return self.video.records()
+
+    def active_records(self):
+        """Активні обʼєкти управління — для керування, роботи, виявлення, карти роботи."""
+        return self.video.active_records()
 
     # --- моделі камер («Налаштування / Моделі камер») -----------------------------------------------------------
     def camera_models(self):

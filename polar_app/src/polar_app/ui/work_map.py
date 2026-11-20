@@ -103,7 +103,7 @@ class WorkMapScreen(QWidget):
         self.view.update()
 
     def _cameras_alt(self) -> float:
-        recs = [r for r in self.ctx.records() if r.latitude is not None and r.longitude is not None]
+        recs = [r for r in self.ctx.active_records() if r.latitude is not None and r.longitude is not None]
         return sum((r.altitude_m or 0.0) for r in recs) / len(recs) if recs else 0.0
 
     def target_altitude(self) -> float:
@@ -129,7 +129,7 @@ class WorkMapScreen(QWidget):
 
     def set_demo_target(self, lat: float, lon: float) -> List[Tuple[str, float, float, float]]:
         """Ціль на середній висоті камер; кожна камера — центром на ціль. Повертає кути камер."""
-        recs = [r for r in self.ctx.records() if r.latitude is not None and r.longitude is not None]
+        recs = [r for r in self.ctx.active_records() if r.latitude is not None and r.longitude is not None]
         if not recs:
             self.demo_info.setText("Демо: у камер немає координат.")
             self.demo_info.setStyleSheet(f"color: {BAD}")
@@ -166,7 +166,7 @@ class WorkMapScreen(QWidget):
         pen = QPen(QColor(198, 40, 40, 180), 1.5)
         pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
-        for r in self.ctx.records():
+        for r in self.ctx.active_records():
             if r.latitude is not None and r.longitude is not None:
                 p.drawLine(view.to_screen(r.latitude, r.longitude), pt)
         p.setPen(QPen(QColor("white"), 2))

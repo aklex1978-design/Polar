@@ -91,6 +91,38 @@ def test_target_confirmed_written_and_lost(ctx):
     assert ctx.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'target_lost'").fetchone()[0] == 1
 
 
+def test_target_motion_course_speed_and_prediction(ctx):
+    """Ціль летить на схід 20 м/с і набирає 3 м/с: курс 90°, швидкості, прогноз координат через 10 с."""
+    import numpy as np
+
+    from polar_app.target_service import TargetService
+    clock = Clock()
+    svc = TargetService(ctx, clock)
+    recs = ctx.records()
+    s = DetectionSettings(hold_s=2.0, motion_window_s=2.0, predict_s=10.0)
+    svc.start(recs, s)
+    svc._stop.set()
+    svc._thread.join()
+    start = GeoPoint(50.4515, 30.5270, 450.0)
+    local = LocalFrame(start)
+    v = np.array([20.0, 0.0, 3.0])
+    for i in range(50):                                   # 2 с по 0,04 с
+        clock.t += 0.04
+        observe(svc, recs, local.to_geo(v * (i * 0.04)), clock.t)
+        svc.step()
+    tt = next(iter(svc.targets.values()))
+    m = tt.motion
+    assert m.course_deg == pytest.approx(90.0, abs=1.0)
+    assert m.speed_mps == pytest.approx(20.0, abs=0.5) and m.climb_mps == pytest.approx(3.0, abs=0.3)
+    expect = local.to_geo(v * (49 * 0.04 + 10.0))
+    assert np.linalg.norm(local.to_enu(tt.predicted) - local.to_enu(expect)) < 5.0
+    row = next(r for r in svc.rows() if r["camera"] == recs[0].name)
+    assert row["course"] == pytest.approx(90.0, abs=1.0) and row["pred_alt"] == pytest.approx(expect.altitude_m, abs=2)
+    db_row = ctx.conn.execute("SELECT course_deg, speed_mps, climb_mps, predict_s, pred_latitude, pred_longitude, "
+                              "pred_altitude_m FROM targets").fetchone()
+    assert db_row[0] == pytest.approx(90.0, abs=1.0) and db_row[3] == 10.0 and db_row[4] is not None
+
+
 def test_single_camera_gives_no_coordinates(ctx):
     from polar_app.target_service import TargetService
     clock = Clock()
@@ -146,7 +178,7 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
             pos = GeoPoint(r.latitude, r.longitude, r.altitude_m)
             az, el, _ = bearing_elevation(frame, pos, target)
             c.control.go_to(r.name, az + 3.0, el - 2.0, source="learning")       # ціль — не в центрі кадру
-            opts["open_factory"].cams[r.name].targets.append(SimTarget(az, el, size_deg=1.2, brightness=0))
+            opts["open_factory"].cams[r.name].targets.append(SimTarget(az, el, size_deg=1.2, brightness=255))
         assert wait(25, lambda: c.detection.targets.targets)
         tt = next(iter(c.detection.targets.targets.values()))
         err = float((frame.to_enu(tt.geo) - frame.to_enu(target)) @ (frame.to_enu(tt.geo) - frame.to_enu(target))) ** 0.5
@@ -159,5 +191,41 @@ def test_end_to_end_two_cameras_find_gps_of_test_target(tmp_path):
         assert wait(10, stored)                            # запис у базу — асинхронно
         row = c.conn.execute(q).fetchone()
         assert row[3] == 2 and row[2] == pytest.approx(330.0, abs=tol)
+
+        # огляд + наведення: камери самі обходять зону; та, що першою побачить ціль, — підозра, інша
+        # шукає уздовж її променя (або одразу наводиться на ціль з координатами)
+        import numpy as np
+
+        from polar_core.detection import save_settings
+        from polar_core.patrol import CUE
+        c.detection.stop()
+        target = GeoPoint(50.4470, 30.5200, 350.0)                    # нова ціль: стару еталон уже міг «вивчити»
+        sims = {}
+        for r in recs:
+            sims[r.name] = bearing_elevation(frame, GeoPoint(r.latitude, r.longitude, r.altitude_m), target)[:2]
+        els = [el for _az, el in sims.values()]
+        with c.control._db_lock:
+            save_settings(c.conn, DetectionSettings(hold_s=3.0, reference_update_min=0, patrol_dwell_s=0.5,
+                                                    patrol_el_min_deg=round(min(els)), patrol_el_max_deg=round(min(els)),
+                                                    follow_center_pct=10, cue_others=1, cue_min_range_m=50))
+            c.conn.execute("DELETE FROM targets")
+        old = {r.name: opts["open_factory"].cams.get(r.name) for r in recs}
+        assert sorted(c.detection.start()) == sorted(r.name for r in recs)
+        assert "__cue__" in c.detection._threads
+        assert wait(10, lambda: all(opts["open_factory"].cams.get(r.name) is not old[r.name] for r in recs))
+        a_name, b_name = recs[0].name, recs[1].name
+        # спершу ціль бачить лише камера A (відео перепідключено — нові камери імітатора)
+        opts["open_factory"].cams[a_name].targets[:] = [SimTarget(*sims[a_name], size_deg=1.2, brightness=255)]
+        cam_a, cam_b = c.detection.camera(a_name), c.detection.camera(b_name)
+        assert wait(60, lambda: cam_a.suspect is not None), (cam_a.patrol_text, cam_b.patrol_text)
+        assert wait(10, lambda: cam_b.patrol.state == CUE), cam_b.patrol_text       # B шукає по променю A
+        assert wait(5, lambda: "НАВЕДЕННЯ: пошук по променю «" + a_name in cam_b.patrol_text), cam_b.patrol_text
+        with c.control._db_lock:
+            assert c.conn.execute("SELECT COUNT(*) FROM events WHERE kind = 'cue'").fetchone()[0] >= 1
+        opts["open_factory"].cams[b_name].targets[:] = [SimTarget(*sims[b_name], size_deg=1.2, brightness=255)]
+        assert wait(60, lambda: c.detection.targets.targets), (cam_a.patrol_text, cam_b.patrol_text)
+        tt = next(iter(c.detection.targets.targets.values()))
+        err = float(np.linalg.norm(frame.to_enu(tt.geo) - frame.to_enu(target)))
+        assert err <= c.detection.targets.params.tolerance(tt.target.distance_m), err
     finally:
         c.shutdown()

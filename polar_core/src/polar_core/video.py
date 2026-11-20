@@ -200,6 +200,9 @@ def usb_backends(cv2, platform: str = sys.platform) -> list:
     return [cv2.CAP_V4L2, cv2.CAP_ANY]
 
 
+DECODER_THREADS = 1
+
+
 def opencv_opener(target: Union[int, str], options: str = "", usb: bool = False) -> Callable[[], object]:
     """Фабрика cv2.VideoCapture для VideoSource."""
     def open_capture():
@@ -215,9 +218,13 @@ def opencv_opener(target: Union[int, str], options: str = "", usb: bool = False)
                 cap.release()
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             return cap
+        # Декодер — в один потік: багатопотокове декодування «по кадрах» тримає по кадру на кожен потік
+        # (на 16-потоковому процесорі ≈ 16 кадрів ≈ 0,5 с затримки). Кадр 640×480…1080p один потік декодує вчасно.
+        params = [cv2.CAP_PROP_N_THREADS, DECODER_THREADS] if hasattr(cv2, "CAP_PROP_N_THREADS") else []
         with _OPEN_LOCK:
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = options
-            cap = cv2.VideoCapture(target, cv2.CAP_FFMPEG)
+            cap = cv2.VideoCapture(target, cv2.CAP_FFMPEG, params) if params else \
+                cv2.VideoCapture(target, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return cap
     return open_capture

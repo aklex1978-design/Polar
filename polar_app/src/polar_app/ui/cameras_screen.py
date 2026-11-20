@@ -8,7 +8,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QTableWidget,
                              QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .common import BAD, WARN
+from .common import BAD, QUIET, WARN
 
 
 class CamerasScreen(QWidget):
@@ -56,10 +56,17 @@ class CamerasScreen(QWidget):
             if rec.panorama_stale:
                 name.setToolTip("панорама застаріла — потрібен новий огляд")
                 name.setForeground(QColor(WARN))
+            if not rec.active:
+                name.setText(f"{rec.name} · неактивна")
+                name.setToolTip("неактивна: не підключається і не бере участі в керуванні та роботі")
+                name.setForeground(QColor(QUIET))
             self.table.setItem(r, 0, name)
             self.table.setItem(r, 1, QTableWidgetItem(rec.model))
             calib = QPushButton("Калібрування")
             calib.clicked.connect(lambda _=False, i=rec.id: self.calibrate_requested.emit(i))
+            calib.setEnabled(rec.active)
+            if not rec.active:
+                calib.setToolTip("камера неактивна — увімкніть «Активна» у формі камери")
             edit = QPushButton("Редагувати")
             edit.clicked.connect(lambda _=False, i=rec.id: self.edit_requested.emit(i))
             delete = QPushButton("Видалити")

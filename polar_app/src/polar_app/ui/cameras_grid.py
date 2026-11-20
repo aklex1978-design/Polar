@@ -16,8 +16,8 @@ from polar_core import calibration as cal
 from polar_core.angles import wrap360
 from polar_core.control import ManualControlLocked
 
-from .calibration_screen import CameraView, PanoramaView
-from .common import BAD, GOOD, frame_pixmap
+from .calibration_screen import CameraView, PanoramaView, az_limits_north
+from .common import BAD, GOOD, WARN, frame_pixmap
 from .snapshot_window import SnapshotWindow
 
 
@@ -91,7 +91,7 @@ class CamerasGridScreen(QWidget):
         self.timer.start(150)
 
     def enter(self) -> None:
-        recs = self.ctx.records()
+        recs = self.ctx.active_records()
         for t in self.tiles.values():
             t.setParent(None)
         self.tiles = {}
@@ -126,7 +126,9 @@ class CamerasGridScreen(QWidget):
                 tile.say(str(e), BAD)
             return
         if tile:
-            tile.say(f"→ азимут {az:.1f}°, кут місця {el:.1f}°")
+            note = self.ctx.learning.step_note.get(name, "")
+            tile.say(f"→ азимут {az:.1f}°, кут місця {el:.1f}°" + (f" · {note}" if note else ""),
+                     WARN if note else "")
 
     def open_snapshot(self, name: str) -> SnapshotWindow:
         w = self.snapshot_windows.get(name)
@@ -158,7 +160,7 @@ class CamerasGridScreen(QWidget):
         if not self.isVisible():
             return
         learning_on = self.ctx.learning.is_running()
-        for rec in self.ctx.records():
+        for rec in self.ctx.active_records():
             tile = self.tiles.get(rec.name)
             if tile is None:
                 continue
@@ -196,6 +198,10 @@ class CamerasGridScreen(QWidget):
 
     def _refresh_panorama(self, tile: CameraTile, rec, sf, model) -> None:
         pv = tile.panorama
+        try:
+            pv.az_limits = az_limits_north(self.ctx.control.config(rec.name).pan, rec.north_offset_deg)
+        except KeyError:
+            pv.az_limits = None
         learning = self.ctx.learning
         pano = learning.panorama(rec.name)
         key = (id(pano), learning.version.get(rec.name, 0))
@@ -218,7 +224,7 @@ class CamerasGridScreen(QWidget):
             pv.outline = pv.center = pv.azimuth = None
         cov = (f"покриття {tile.pano_coverage * 100:.1f} %" if tile.pano_coverage is not None
                else "панорами ще немає")
-        pv.label = f"азимут {pv.azimuth:.1f}° · місце {sf.angles.elevation_deg:.1f}°" if pv.azimuth is not None else ""
+        pv.label = f"азимут {round(pv.azimuth % 360.0, 1) % 360.0:.1f}° · місце {sf.angles.elevation_deg:.1f}°" if pv.azimuth is not None else ""
         tile.title.setText(f"{rec.name} · панорама: {cov}")
         pv.update()
 

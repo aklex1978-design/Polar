@@ -17,3 +17,6 @@ ros2_ws/log/
 *.sqlite-wal
 *.key
 panoramas/
+maps/
+polar.log*
+*.bundle

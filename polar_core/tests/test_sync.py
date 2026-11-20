@@ -90,3 +90,48 @@ def test_latency_monitor():
     for _ in range(50):
         m.record(300)
     assert m.exceeded and m.percentile() == pytest.approx(300)
+
+
+def test_update_rate_counts_repeated_sensor_frames():
+    """Потік 60 к/с, сенсор оновлюється 20 разів/с (кожен кадр повторено тричі) — 60 і ≈ 20."""
+    from polar_core.sync import update_rate
+    rng = np.random.default_rng(1)
+    scene = rng.integers(0, 255, (480, 2000), dtype=np.uint8).astype(np.float32)
+    frames, moving = [], []
+    for i in range(120):
+        sensor = i // 3                                          # нове зображення раз на 3 кадри
+        x = 10 * sensor
+        img = scene[:, x:x + 640] + rng.normal(0, 2, (480, 640))  # шум аналогового сигналу — у кожному кадрі
+        frames.append((img, i / 60.0))
+        moving.append(True)
+    stream, unique = update_rate(frames, moving)
+    assert stream == pytest.approx(60, rel=0.02) and unique == pytest.approx(20, rel=0.1)
+    all_new = [(scene[:, 5 * i:5 * i + 640], i / 30.0) for i in range(60)]
+    s2, u2 = update_rate(all_new, [True] * 60)
+    assert u2 == pytest.approx(s2, rel=0.05)                      # кожен кадр новий
+    assert update_rate(all_new[:5], [True] * 5) is None
+
+
+@pytest.mark.parametrize("sensor_hz", [30.0, 9.0])
+def test_latency_estimator_with_repeated_low_contrast_frames(sensor_hz):
+    """Потік 60 к/с, сенсор оновлюється рідше (30 або 9 Гц, кадри повторюються), сцена малоконтрастна
+    (тепловізор на стіну) і з шумом — затримку все одно знайдено."""
+    delay = 0.12
+    cam = SimCamera(make_scene(1800, 450, seed=5), resolution=(320, 180), fov_deg=(60, 34))
+    rng = np.random.default_rng(2)
+    h = AngleHistory()
+    for i in range(0, 451):
+        t = i * 0.01
+        h.add(t, round(sweep(t) / 0.088) * 0.088, 15.0, True)
+    est = LatencyEstimator(hfov_deg=60, frame_width=320)
+    t = 0.0
+    while t < 4.4:
+        shown = math.floor((t - delay) * sensor_hz) / sensor_hz        # останнє оновлення сенсора
+        img = cam.capture(sweep(shown), 15.0, t=shown).astype(np.float32)
+        img = 120 + (img - img.mean()) * 0.08 + rng.normal(0, 1.5, img.shape)   # контраст ×0,08, шум
+        est.add_frame(np.clip(img, 0, 255).astype(np.uint8), t)
+        t += 1 / 60
+    lag, quality = est.estimate(h.samples())
+    # сенсор оновлюється раз на 1/sensor_hz: у середньому кадр старший ще на половину цього інтервалу
+    assert lag == pytest.approx(delay + 0.5 / sensor_hz, abs=0.03), (lag, quality)
+    assert quality > 0.6

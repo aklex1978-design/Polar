@@ -61,10 +61,11 @@ def test_azimuth_shortest_path_across_zero():
     ctrl, backend, clock = make()
     ctrl.command(350.0, 0.0)
     run(ctrl, clock, 1.0)
-    assert backend.servos[1].raw_deg == pytest.approx(-10.0)  # 10° назад, а не 350° вперед
+    # 10° назад, а не 350° вперед; вал 0 → −10° за краєм ходу — шкала перенесена (0 → 180°), вал 170°
+    assert backend.servos[1].raw_deg == pytest.approx(170.0) and ctrl.pan_shift_deg == pytest.approx(180.0)
     ctrl.command(20.0, 0.0)
     st = run(ctrl, clock, 1.0)
-    assert backend.servos[1].raw_deg == pytest.approx(20.0)
+    assert backend.servos[1].raw_deg == pytest.approx(200.0)       # 30° вперед через нуль
     assert st.azimuth_deg == pytest.approx(20.0)
 
 
@@ -185,3 +186,73 @@ def test_scan_and_set_id():
         backend.set_id(1, 7)
     with pytest.raises(KeyError):
         backend.set_id(3, 8)
+
+
+def test_zero_here_with_recenter():
+    """Середина ходу: вал тут стає 180°, нуль кута місця = 180°; нижче горизонту тепер можна (межі — від нуля)."""
+    ctrl, backend, clock = make()
+    backend.servos[2].raw_deg = backend.servos[2].goal_deg = 0.5        # горизонт біля краю ходу вала
+    run(ctrl, clock, 0.1)
+    assert ctrl.zero_here("tilt", recenter=True) == pytest.approx(180.0)
+    assert backend.servos[2].raw_deg == pytest.approx(180.0) and ctrl.tilt.zero_offset_deg == pytest.approx(180.0)
+    st = run(ctrl, clock, 0.1)
+    assert st.elevation_deg == pytest.approx(0.0)
+    ctrl.tilt.min_deg = -20.0                                           # межі нижче горизонту — вал не впирається
+    ctrl.command(0.0, -10.0, 180.0)
+    st = run(ctrl, clock, 1.0)
+    assert st.elevation_deg == pytest.approx(-10.0) and backend.servos[2].raw_deg == pytest.approx(170.0)
+    with pytest.raises(ValueError, match="ковзним контактом"):
+        ctrl.zero_here("pan", recenter=True)
+
+
+def make_position_mode(**kw):
+    clock = Clock()
+    backend = SimBackend([1, 2], clock=clock, position_mode=True)
+    pan = kw.pop("pan", ServoConfig(servo_id=1, continuous=True, max_speed_deg_s=180))
+    tilt = ServoConfig(servo_id=2, min_deg=0, max_deg=90, max_speed_deg_s=180)
+    ctrl = PanTiltController(backend, pan, tilt, clock=clock, **kw)
+    return ctrl, backend, clock
+
+
+def test_pan_passes_shaft_end_in_position_mode():
+    """Вал ST3020 у режимі положення — лише 0…360°. Рух вправо через край: шкала вала переноситься
+    (поточне положення — середина 180°), камера йде далі; азимут переходить 360° → 0° без стрибка."""
+    saved = []
+    ctrl, backend, clock = make_position_mode(on_pan_shift=saved.append)
+    backend.servos[1].raw_deg = backend.servos[1].goal_deg = 350.0
+    run(ctrl, clock, 0.1)
+    for expected in (355.0, 0.0, 5.0, 10.0, 15.0):
+        ctrl.jog(5.0, 0.0)
+        st = run(ctrl, clock, 0.5)
+        assert st.azimuth_deg == pytest.approx(expected % 360.0, abs=0.01)
+    assert 0.0 <= backend.servos[1].raw_deg < 360.0
+    assert ctrl.pan_shift_deg == pytest.approx(180.0 - 355.0)        # перенесено один раз, біля 355°
+    assert saved == [pytest.approx(-175.0)]
+    for expected in (10.0, 5.0, 0.0, 355.0, 350.0, 345.0):           # і назад, через 0 — вліво
+        ctrl.jog(-5.0, 0.0)
+        st = run(ctrl, clock, 0.5)
+        assert st.azimuth_deg == pytest.approx(expected % 360.0, abs=0.01)
+    ctrl.command(200.0, 0.0)                                          # довгий шлях — найкоротшим боком
+    st = run(ctrl, clock, 3.0)
+    assert st.azimuth_deg == pytest.approx(200.0, abs=0.01)
+
+
+def test_pan_shift_restored_and_reset_by_zero():
+    ctrl, backend, clock = make_position_mode(pan_shift_deg=-175.0)
+    backend.servos[1].raw_deg = backend.servos[1].goal_deg = 185.0     # після перезапуску Pi
+    st = run(ctrl, clock, 0.1)
+    assert st.azimuth_deg == pytest.approx(0.0)
+    assert ctrl.zero_here("pan") == pytest.approx(185.0) and ctrl.pan_shift_deg == 0.0
+    assert run(ctrl, clock, 0.1).azimuth_deg == pytest.approx(0.0)
+
+
+def test_limited_pan_across_shaft_end():
+    """Нуль азимуту біля краю вала (≈360°), межі 1…181°: вал показує 0,5° (а не 360,5°) — рух від нього."""
+    pan = ServoConfig(servo_id=1, zero_offset_deg=359.5, min_deg=1.0, max_deg=181.0, max_speed_deg_s=180)
+    ctrl, backend, clock = make_position_mode(pan=pan)
+    backend.servos[1].raw_deg = backend.servos[1].goal_deg = 0.5       # азимут 1°
+    run(ctrl, clock, 0.1)
+    ctrl.command(90.0, 0.0)
+    st = run(ctrl, clock, 2.0)
+    assert st.azimuth_deg == pytest.approx(90.0, abs=0.01)
+    assert backend.servos[1].raw_deg == pytest.approx(89.5) and ctrl.pan_shift_deg == 0.0   # від поточного вала — без переносу

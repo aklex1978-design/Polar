@@ -25,3 +25,5 @@ def seed_demo(conn: sqlite3.Connection) -> None:
                          "stream_url, stream_codec, demo_servos, model_id) "
                          "VALUES (?, 'демо', 1920, 1080, 60, 34, ?, ?, ?, ?, 180, ?, ?, ?, 1, ?)",
                          (name, north, ns, lat, lon, proto, url, "MJPEG" if proto == "USB" else "H.264", mid))
+        # огляд зони в Слідкуванні вимкнено: тести, яким потрібен огляд, вмикають його самі
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('detection.patrol_dwell_s', '0')")

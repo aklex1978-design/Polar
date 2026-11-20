@@ -71,7 +71,7 @@ class MapService:
         return root if level is None else os.path.join(root, str(level))
 
     def camera_points(self) -> List[Tuple[str, float, float]]:
-        return [(r.name, r.latitude, r.longitude) for r in self.ctx.records()
+        return [(r.name, r.latitude, r.longitude) for r in self.ctx.active_records()
                 if r.latitude is not None and r.longitude is not None]
 
     def center(self) -> Optional[Tuple[float, float]]:

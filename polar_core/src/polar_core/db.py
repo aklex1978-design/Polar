@@ -195,6 +195,25 @@ MIGRATIONS = [
     UPDATE cameras SET model = (SELECT name FROM camera_models WHERE id = cameras.model_id)
         WHERE model_id IS NOT NULL;
     """,
+    # 9 — адреса Raspberry Pi камери для звʼязку через rosbridge (порожньо — хост з адреси потоку)
+    """
+    ALTER TABLE cameras ADD COLUMN pi_host TEXT NOT NULL DEFAULT '';
+    """,
+    # 10 — обʼєкт управління активний: неактивний не підключається (відео, керування) і не показується
+    # в «Обʼєкти управління / Управління», «Робота / Обʼєкти управління», виявленні й на карті роботи
+    """
+    ALTER TABLE cameras ADD COLUMN active INTEGER NOT NULL DEFAULT 1;
+    """,
+    # 11 — рух цілі: курс, швидкості і прогноз положення через predict_s секунд
+    """
+    ALTER TABLE targets ADD COLUMN course_deg REAL;
+    ALTER TABLE targets ADD COLUMN speed_mps REAL;
+    ALTER TABLE targets ADD COLUMN climb_mps REAL;
+    ALTER TABLE targets ADD COLUMN predict_s REAL;
+    ALTER TABLE targets ADD COLUMN pred_latitude REAL;
+    ALTER TABLE targets ADD COLUMN pred_longitude REAL;
+    ALTER TABLE targets ADD COLUMN pred_altitude_m REAL;
+    """,
 ]
 
 SCHEMA_VERSION = len(MIGRATIONS)

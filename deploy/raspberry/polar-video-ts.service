@@ -1,0 +1,6 @@
+[Unit]
+Description=Polar: перезапуск відео після зміни мітки часу в кадрі
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl --no-block restart polar-video.service

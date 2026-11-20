@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, 
                              QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
                              QWidget)
 
-from polar_core.control import RMW_CHOICES, RosSettings
+from polar_core.control import RMW_CHOICES, TRANSPORTS, RosSettings
 from polar_core.detection import DetectionSettings
 
 from .common import BAD, GOOD, WARN
@@ -170,12 +170,21 @@ class GeneralSettingsScreen(_Screen):
 
 DETECTION_FIELDS = [
     # поле, підпис, мін, макс, крок, знаків, підказка
-    ("min_size_deg", "Мінімальний розмір обʼєкта, °", 0.01, 30, 0.05, 2,
-     "Менші обʼєкти — шум; для кожної камери перераховується в пікселі"),
+    ("min_area_px", "Мінімальний розмір обʼєкта, пікселів", 1, 100000, 1, 0,
+     "Площа яскравої плями в пікселях кадру; 2 — обʼєкт більший за 1 піксель"),
+    ("min_frames", "Мінімальна кількість кадрів поспіль", 1, 100, 1, 0,
+     "Обʼєкт стає ціллю, лише коли він є на стількох кадрах підряд (1 — з першого кадру)"),
+    ("max_objects", "Найбільше обʼєктів на кадрі", 1, 100, 1, 0,
+     "Виділяються лише найяскравіші плями, не більше стількох; стежить камера за найяскравішою"),
+    ("solidity_pct", "Суцільність плями, %", 0, 100, 5, 0,
+     "Пляма має бути суцільною: частка її пікселів від площі без дір (0 — не перевіряти)"),
     ("max_range_m", "Максимальна дальність виявлення, м", 1, 100000, 100, 0,
      "Цілі, розраховані далі, відкидаються"),
-    ("diff_threshold", "Поріг різниці, 0–255", 0, 255, 1, 0,
-     "Наскільки піксель кадру має відрізнятися від панорами, щоб бути рухом"),
+    ("sensitivity_k", "Чутливість K (поріг = K × шум фону)", 1, 50, 0.5, 1,
+     "Піксель — частина цілі, якщо яскравіший за панораму більше ніж на K × шум фону (шум міряється на кожному "
+     "кадрі по ділянках 8×8). Менше K — чутливіше, більше — менше хибних тривог; типово 5"),
+    ("min_threshold", "Мінімальний поріг яскравості, 0–255", 1, 255, 1, 0,
+     "Поріг не нижчий за це, навіть коли шуму майже немає (рівне небо)"),
     ("reference_update_min", "Частота оновлення еталона, хв (0 — не оновлювати)", 0, 1440, 1, 1,
      "Як часто панорама підлаштовується під освітлення"),
     ("accuracy_deg", "Критерій точності, °", 0.01, 10, 0.05, 2,
@@ -190,6 +199,25 @@ DETECTION_FIELDS = [
      "При майже паралельних променях дальність неточна"),
     ("confirm_frames", "Кадрів для підтвердження пари", 1, 1000, 1, 0,
      "Пара — одна ціль, лише коли тримається стільки кадрів поспіль"),
+    ("patrol_dwell_s", "Огляд: час на кожному положенні, с (0 — камера стоїть)", 0, 600, 0.5, 1,
+     "У Слідкуванні камера по черзі обходить положення в межах кута і на кожному стільки часу шукає рух"),
+    ("patrol_el_min_deg", "Огляд: кут місця від, °", 0, 90, 1, 1,
+     "Нижній ряд огляду (центр кадру); межі кута місця сервопривода теж діють"),
+    ("patrol_el_max_deg", "Огляд: кут місця до, °", 0, 90, 1, 1,
+     "Верхній ряд огляду — коли кадр дістає до цього кута"),
+    ("patrol_step_pct", "Огляд: крок між положеннями, % поля зору", 10, 100, 5, 0,
+     "100 — кадри стик у стик; менше — з перекриттям, огляд повільніший"),
+    ("follow_center_pct", "Стеження: допуск від центру камери, % поля зору", 1, 50, 1, 0,
+     "Ціль відійшла від центру камери далі за стільки — камера плавно наводиться на неї (швидкість "
+     "зменшується, коли ціль наближається до центру); менше — точніше, але камера рухається частіше"),
+    ("motion_window_s", "Рух цілі: вікно оцінки, с", 0.5, 60, 0.5, 1,
+     "Напрямок і швидкість — за положеннями цілі за стільки останніх секунд (більше — плавніше, але повільніше)"),
+    ("predict_s", "Прогноз положення цілі через, с", 0, 3600, 1, 0,
+     "Де буде ціль (координати, висота; для однієї камери — кути) через цей час, якщо рух не зміниться"),
+    ("cue_others", "Наводити інші камери на підозру (1 — так, 0 — ні)", 0, 1, 1, 0,
+     "Підозра на одній камері — інші шукають ціль уздовж її променя; ціль з координатами — наводяться прямо"),
+    ("cue_min_range_m", "Наведення: пошук по променю від, м", 1, 100000, 10, 0,
+     "Ближня межа пошуку уздовж променя; дальня — максимальна дальність виявлення"),
 ]
 
 
@@ -204,7 +232,8 @@ class DetectionSettingsScreen(_Screen):
         f = QFormLayout(box)
         self.fields = {}
         for name, label, lo, hi, step, dec, tip in DETECTION_FIELDS:
-            w = QSpinBox() if dec == 0 and name in ("diff_threshold", "confirm_frames") else QDoubleSpinBox()
+            w = QSpinBox() if dec == 0 and name in ("min_threshold", "confirm_frames", "cue_others", "min_area_px", "min_frames", "max_objects") \
+                else QDoubleSpinBox()
             w.setRange(lo, hi)
             if isinstance(w, QDoubleSpinBox):
                 w.setDecimals(dec)
@@ -242,12 +271,22 @@ class DetectionSettingsScreen(_Screen):
 class RosSettingsScreen(_Screen):
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(ctx, "Налаштування / ROS 2", parent)
-        hint = QLabel("Звʼязок із Raspberry Pi камер. ROS_DOMAIN_ID, реалізація DDS, інтерфейс, Discovery Server "
-                      "і SROS2 мають збігатися на всіх вузлах; вони застосовуються після перезапуску програми.")
+        hint = QLabel("Звʼязок із Raspberry Pi камер. rosbridge — Pi доступні по мережі за адресою з форми камери "
+                      "(WebSocket), ROS 2 на цьому компʼютері не потрібен. ROS 2 DDS — сервер сам є вузлом ROS 2 "
+                      "(потрібен ROS 2 Humble); тоді ROS_DOMAIN_ID, DDS, інтерфейс, Discovery Server і SROS2 мають "
+                      "збігатися на всіх вузлах. Спосіб звʼязку й параметри DDS застосовуються після перезапуску.")
         hint.setWordWrap(True)
         self.v.addWidget(hint)
         box = QGroupBox("Параметри")
         f = QFormLayout(box)
+        self.transport = QComboBox()
+        for label, value in TRANSPORTS.items():
+            self.transport.addItem(label, value)
+        self.transport.currentIndexChanged.connect(lambda *_: self._transport_changed())
+        f.addRow("Звʼязок з Pi", self.transport)
+        self.bridge_port = QSpinBox()
+        self.bridge_port.setRange(1, 65535)
+        f.addRow("Порт rosbridge на Pi", self.bridge_port)
         self.domain = QSpinBox()
         self.domain.setRange(0, 101)
         f.addRow("ROS_DOMAIN_ID", self.domain)
@@ -292,6 +331,14 @@ class RosSettingsScreen(_Screen):
         self.v.addWidget(box)
         self._buttons()
 
+    def _transport_changed(self) -> None:
+        dds = self.transport.currentData() == "dds"
+        self.bridge_port.setEnabled(not dds)
+        for w in (self.domain, self.rmw, self.interface, self.discovery_mode, self.sros):
+            w.setEnabled(dds)
+        self.discovery.setEnabled(dds and self.discovery_mode.currentIndex() == 1)
+        self.keystore.setEnabled(dds and self.sros.isChecked())
+
     def _browse_keys(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Ключі SROS2", self.keystore.text() or "")
         if d:
@@ -299,6 +346,8 @@ class RosSettingsScreen(_Screen):
 
     def enter(self) -> None:
         s = self.ctx.settings.ros()
+        self.transport.setCurrentIndex(max(0, self.transport.findData(s.transport)))
+        self.bridge_port.setValue(s.bridge_port)
         self.domain.setValue(s.domain_id)
         i = self.rmw.findData(s.rmw)
         self.rmw.setCurrentIndex(max(0, i))
@@ -315,10 +364,12 @@ class RosSettingsScreen(_Screen):
         self.sros.setChecked(s.sros_enabled)
         self.keystore.setText(s.sros_keystore)
         self.keystore.setEnabled(s.sros_enabled)
+        self._transport_changed()
         self.say("")
 
     def values(self) -> RosSettings:
         return RosSettings(
+            transport=self.transport.currentData(), bridge_port=self.bridge_port.value(),
             domain_id=self.domain.value(), rmw=self.rmw.currentData(), interface=self.interface.currentText().strip(),
             discovery_server=self.discovery.text().strip() if self.discovery_mode.currentIndex() == 1 else "",
             topic_prefix=self.prefix.text().strip(), state_rate_hz=self.rate.value(),

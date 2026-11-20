@@ -18,6 +18,8 @@ EXPANDED_BY_DEFAULT = ("Загальне",)    # решта блоків зго�
 # (група, поле, підпис, вид, параметри)
 FIELDS = [
     ("Загальне", "name", "Назва *", "text", {}),
+    ("Загальне", "active", "Активна", "check",
+     dict(text="так — підключається і бере участь у керуванні та роботі")),
     ("Загальне", "model_id", "Модель *", "model", {}),
     # оптика — з моделі камери («Налаштування / Моделі камер»), у формі камери лише для перегляду
     ("Оптика", "fov_x_deg", "Кут огляду X (HFOV), °", "ro", {}),
@@ -52,6 +54,7 @@ FIELDS = [
     ("Управління", "demo_servos", "Демо сервоприводів", "check",
      dict(text="імітатор замість Raspberry Pi і ROS 2")),
     ("Управління", "ros_namespace", "Простір імен ROS 2 *", "text", dict(ph="camera_1")),
+    ("Управління", "pi_host", "Адреса Raspberry Pi", "text", dict(ph="з адреси потоку, напр. 192.168.0.120")),
     ("Управління", "az_min", "Межі азимуту, ° (мін)", "optfloat", dict(ph="без меж")),
     ("Управління", "az_max", "Межі азимуту, ° (макс)", "optfloat", dict(ph="без меж")),
     ("Управління", "el_min", "Межі кута місця, ° (мін)", "float", dict(lo=0, hi=90, dec=1)),
@@ -60,6 +63,10 @@ FIELDS = [
 ]
 
 HINTS = {
+    "active": "неактивна камера не підключається (відео, сервоприводи) і не показується в «Обʼєкти управління / "
+              "Управління», «Робота / Обʼєкти управління», виявленні й на карті роботи; лишається у списку",
+    "pi_host": "куди підключатися до rosbridge на Pi (порт — «Налаштування → ROS 2»); порожньо — хост з адреси "
+               "потоку RTSP",
     "model_id": "оптика камери (кути огляду, дисторсія) береться з моделі; моделі — меню «Налаштування / Моделі камер»",
     "address": "URL, IP:порт або номер USB-пристрою — залежно від протоколу",
     "stream_kind": "основний — для панорами, додатковий — для перегляду",
@@ -124,6 +131,11 @@ class CameraForm(QWidget):
         self.message = QLabel("")
         self.message.setWordWrap(True)
         left.addWidget(self.message)
+        self.stages_info = QLabel("")
+        self.stages_info.setWordWrap(True)
+        self.stages_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.stages_info.setVisible(False)
+        left.addWidget(self.stages_info)
         outer.addLayout(left, 3)
         outer.addWidget(self._build_video_panel(), 2)
 
@@ -228,6 +240,10 @@ class CameraForm(QWidget):
         self.latency_btn = QPushButton("Виміряти затримку")
         self.latency_btn.setToolTip("Камера повернеться на ±25° і назад; затримка відео запишеться в параметри")
         self.latency_btn.clicked.connect(self.measure_latency)
+        self.stages_btn = QPushButton("Затримка по етапах")
+        self.stages_btn.setToolTip("Годинник Pi ↔ Polar, кадр на Pi → у Polar → на екрані, кути Pi → Polar. "
+                                   "На ~10 с Pi вписує мітку часу в кадр (відео перезапуститься)")
+        self.stages_btn.clicked.connect(self.measure_stages)
         self.save_btn = QPushButton("Зберегти")
         self.save_btn.setDefault(True)
         self.save_btn.clicked.connect(self.save)
@@ -235,6 +251,7 @@ class CameraForm(QWidget):
         self.cancel_btn.clicked.connect(self.closed.emit)
         h.addWidget(self.check_btn)
         h.addWidget(self.latency_btn)
+        h.addWidget(self.stages_btn)
         h.addStretch(1)
         h.addWidget(self.cancel_btn)
         h.addWidget(self.save_btn)
@@ -307,6 +324,8 @@ class CameraForm(QWidget):
         self._loading = False
         self._show_optics()
         self.latency_btn.setEnabled(camera_id is not None)
+        self.stages_btn.setEnabled(camera_id is not None)
+        self.stages_info.setVisible(False)
         self._protocol_hint()
         self.validate()
 
@@ -529,13 +548,42 @@ class CameraForm(QWidget):
         def report(f):
             self.latency_btn.setEnabled(True)
             try:
-                ms, q = f.result()
+                ms, q, rates = f.result()
             except Exception as e:  # noqa: BLE001
                 self._say(f"Затримку не виміряно: {e}", BAD)
                 return
             self.widgets["video_latency_ms"].setValue(ms)
             self.rec.video_latency_ms = ms
-            self._say(f"Затримка відео відносно датчика: {ms} мс (збіг {q:.2f}); збережено.", GOOD)
+            tail = ""
+            if rates:
+                stream, unique = rates
+                tail = (f" Потік: {stream:.0f} кадрів/с; камера оновлює зображення: {unique:.0f} разів/с"
+                        + (" — частина кадрів повторюється." if unique < 0.8 * stream else "."))
+            self._say(f"Затримка відео відносно датчика: {ms} мс (збіг {q:.2f}); збережено.{tail}", GOOD)
+        self.bridge.watch(fut, report)
+
+    def measure_stages(self) -> None:
+        if self.rec.id is None:
+            return
+        self._say("Вимірюю затримку по етапах: синхронізую годинник, Pi вписує мітку часу в кадри (~10 с)…")
+        self.stages_btn.setEnabled(False)
+        try:
+            fut = self.ctx.video.measure_stages(self.rec.name)
+        except Exception as e:  # noqa: BLE001
+            self._say(str(e), BAD)
+            self.stages_btn.setEnabled(True)
+            return
+
+        def report(f):
+            self.stages_btn.setEnabled(True)
+            try:
+                r = f.result()
+            except Exception as e:  # noqa: BLE001
+                self._say(f"Затримку по етапах не виміряно: {e}", BAD)
+                return
+            self.stages_info.setText("<b>Затримка по етапах</b><br>" + "<br>".join(r.lines()))
+            self.stages_info.setVisible(True)
+            self._say("Затримку по етапах виміряно.", GOOD)
         self.bridge.watch(fut, report)
 
     # --- живе відео ------------------------------------------------------------------------
@@ -549,6 +597,8 @@ class CameraForm(QWidget):
             self.preview.setPixmap(pix.scaled(self.preview.width(), self.preview.height(),
                                               Qt.AspectRatioMode.KeepAspectRatio,
                                               Qt.TransformationMode.SmoothTransformation))
+            if sf is not None:
+                self.ctx.video.note_displayed(name, sf)
         if sf is not None:
             if sf.has_angles:
                 a = sf.angles

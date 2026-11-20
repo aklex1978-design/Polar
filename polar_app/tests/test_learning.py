@@ -149,3 +149,38 @@ def test_step_and_save_current(ctx):
         assert wait(10, lambda: ctx.learning.snapshot_for(name)[0] is None)   # інше положення — знімка немає
     finally:
         ctx.video.release(name)
+
+
+def test_learning_respects_azimuth_limits(ctx):
+    """Межі азимуту 60…200° (кут камери): Навчання не посилає камеру в заборонену зону, але доходить до меж;
+    крок кнопкою за межу — напис «Досягнуто межі»."""
+    import copy
+    assert wait(5, lambda: ctx.control.status("Камера 1").link_ok)
+    cfg = copy.deepcopy(ctx.control.config("Камера 1"))
+    cfg.pan.min_deg, cfg.pan.max_deg = 60.0, 200.0
+    ctx.control.save_config(cfg).result(5)
+    sent = []
+    real = ctx.control.go_to
+
+    def spy(name, az, el, *a, **kw):
+        out = real(name, az, el, *a, **kw)
+        sent.append(((az - ctx.control.config(name).north_offset_deg) % 360, out))
+        return out
+    ctx.control.go_to = spy
+    try:
+        ctx.learning.start(["Камера 1"])
+        st = ctx.learning.wait("Камера 1", timeout=120)
+    finally:
+        ctx.control.go_to = real
+    assert st.state == "done", st.message
+    cams = [az for az, _out in sent]
+    assert cams and all(60.0 - 1e-6 <= a <= 200.0 + 1e-6 for a in cams), cams   # лише в межах
+    assert min(cams) == pytest.approx(60.0) and max(cams) == pytest.approx(200.0)  # до самих меж
+    assert st.steps < 32                                                          # без зайвих кроків
+    # крок кнопкою на «Робота / Обʼєкти управління» за межу
+    off = ctx.control.config("Камера 1").north_offset_deg
+    ctx.control.go_to("Камера 1", (200.0 + off) % 360, 20.0, 360.0)
+    assert wait(5, lambda: abs(((ctx.control.status("Камера 1").azimuth_deg - off - 200.0) + 180) % 360 - 180) < 0.5)
+    time.sleep(0.3)
+    ctx.learning.step("Камера 1", +1, 0)
+    assert "межа 200°" in ctx.learning.step_note["Камера 1"]

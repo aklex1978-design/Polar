@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Optional
 
 from .backend import ServoBackend
@@ -140,7 +141,10 @@ class ST3020Bus(ServoBackend):
 
         position = decode_signed15(u16(at(REG_PRESENT_POSITION), at(REG_PRESENT_POSITION + 1)))
         speed = decode_signed15(u16(at(REG_PRESENT_SPEED), at(REG_PRESENT_SPEED + 1)))
-        load = decode_signed15(u16(at(REG_PRESENT_LOAD), at(REG_PRESENT_LOAD + 1)) & 0x87FF)
+        # навантаження: біти 0–9 — модуль 0…1000 (0,1 %), біт 10 — напрямок (перевірено на ST3020:
+        # 1064 = −4,0 %, а не 106,4 %)
+        raw_load = u16(at(REG_PRESENT_LOAD), at(REG_PRESENT_LOAD + 1))
+        load = -(raw_load & 0x3FF) if raw_load & 0x400 else raw_load & 0x3FF
         current = u16(at(REG_PRESENT_CURRENT), at(REG_PRESENT_CURRENT + 1)) & 0x7FFF
         return ServoReading(
             raw_deg=position * DEG_PER_STEP,
@@ -174,7 +178,7 @@ class ST3020Bus(ServoBackend):
         self._write(servo_id, REG_TORQUE_LIMIT, bytes([value & 0xFF, value >> 8]))
 
     def set_id(self, old_id: int, new_id: int) -> None:
-        # TODO: verify — адреси ID (5) і блокування EEPROM (55) взято з протоколу Feetech STS.
+        # адреси ID (5) і блокування EEPROM (55) перевірено на ST3020 (зміна ID 1 → 2)
         if not 1 <= new_id <= 253:
             raise ValueError("ID має бути 1..253")
         if self.ping(new_id):
@@ -185,6 +189,23 @@ class ST3020Bus(ServoBackend):
         self._write(new_id, REG_LOCK, bytes([1]))
         if not self.ping(new_id):
             raise IOError(f"після зміни сервопривід не відповідає з ID {new_id}")
+
+    def recenter(self, servo_id: int) -> float:
+        """Калібрування середини Feetech ST/STS: запис 128 у регістр моменту (40) робить поточне положення
+        вала серединою ходу — 2048 кроків (180°); зміщення зберігається в самому сервоприводі.
+        Момент на мить вимикається, а ціль ставиться в нове поточне положення — щоб вал не смикнувся
+        до старої цілі. Повертає новий кут вала (≈180°)."""
+        if not self._write(servo_id, REG_TORQUE_ENABLE, bytes([0])):
+            raise IOError(f"сервопривід {servo_id} не відповідає")
+        self._write(servo_id, REG_TORQUE_ENABLE, bytes([128]))
+        time.sleep(0.15)
+        reading = self.read(servo_id)
+        if reading is None:
+            raise IOError(f"сервопривід {servo_id} не відповів після калібрування середини")
+        pos = encode_signed15(int(round(reading.raw_deg / DEG_PER_STEP)))
+        self._write(servo_id, REG_GOAL_POSITION, bytes([pos & 0xFF, pos >> 8]))
+        self._write(servo_id, REG_TORQUE_ENABLE, bytes([1]))
+        return reading.raw_deg
 
     def rebase(self, servo_id: int, turns: int) -> None:
         # TODO: verify — спосіб скинути лічильник обертів без руху вала залежить від прошивки ST3020

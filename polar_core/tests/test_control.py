@@ -92,3 +92,47 @@ def test_camera_status(conn):
     assert not c.camera_status(cfg, snap, 11.5, 2.0).link_ok
     snap.error_flags = c.ERROR_LINK_TIMEOUT
     assert not c.camera_status(cfg, snap, 10.0, 2.0).link_ok
+
+
+def test_servo_raw_range_must_fit_position_mode():
+    """Вертикальний ST3020 (режим положення) — вал лише 0…360°: зворотний напрямок із нулем 0 недопустимий."""
+    from polar_core.control import ServoSettings
+    ok = ServoSettings("tilt", 2, direction=1, zero_offset_deg=0.0, min_deg=0.0, max_deg=90.0)
+    assert ok.validate() == [] and ok.raw_range() == (0.0, 90.0)
+    bad = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=0.0, gear_ratio=0.6, min_deg=4.0, max_deg=90.0)
+    assert any("0…360" in e for e in bad.validate())
+    fixed = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=180.0, min_deg=0.0, max_deg=90.0)
+    assert fixed.validate() == [] and fixed.raw_range() == (90.0, 180.0)
+    assert ServoSettings("pan", 1, direction=-1).raw_range() == (None, None)          # ковзний контакт
+
+
+def test_limit_notes():
+    from polar_core.control import CameraControlConfig, ServoSettings, limit_notes
+    cfg = CameraControlConfig(1, "К", "camera_1",
+                              pan=ServoSettings("pan", 1, min_deg=10.0, max_deg=350.0),
+                              tilt=ServoSettings("tilt", 2, min_deg=4.0, max_deg=90.0))
+    assert limit_notes(cfg, 5.0, 95.0) == ["азимут — нижня межа 10°", "кут місця — верхня межа 90°"]
+    assert limit_notes(cfg, 100.0, 4.0) == []
+    assert limit_notes(cfg, None, 1.0) == ["кут місця — нижня межа 4°"]
+
+
+def test_freed_limits_cover_full_shaft_travel():
+    """«Зняти межі»: межі осі — на весь хід вала 0…360° від поточного нуля; ковзний контакт без змін."""
+    from polar_core.control import CameraControlConfig, ServoSettings
+    t = ServoSettings("tilt", 2, direction=1, zero_offset_deg=30.0, min_deg=0.0, max_deg=90.0)
+    f = t.freed()
+    assert (f.min_deg, f.max_deg) == (-30.0, 330.0) and f.validate() == [] and t.max_deg == 90.0
+    r = ServoSettings("tilt", 2, direction=-1, zero_offset_deg=200.0, min_deg=0.0, max_deg=90.0).freed()
+    assert (r.min_deg, r.max_deg) == (-160.0, 200.0)
+    cfg = CameraControlConfig(1, "К", "camera_1", tilt=t)
+    assert cfg.freed().tilt.min_deg == -30.0 and cfg.freed().pan.min_deg is None and cfg.tilt.min_deg == 0.0
+
+
+def test_pan_limits_with_zero_beyond_one_turn_are_valid():
+    """Горизонтальний ST3020 багатообертовий: нуль ≈ 360° і межі 1…181° (вал 361…541°) — допустимо;
+    «Зняти межі» для азимуту — просто без меж."""
+    from polar_core.control import ServoSettings
+    pan = ServoSettings("pan", 1, direction=1, zero_offset_deg=360.0, gear_ratio=1.2, min_deg=1.0, max_deg=181.0)
+    assert pan.validate() == [] and pan.raw_range() == (None, None)
+    f = pan.freed()
+    assert f.min_deg is None and f.max_deg is None and f.continuous and pan.min_deg == 1.0

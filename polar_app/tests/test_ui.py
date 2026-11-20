@@ -100,6 +100,14 @@ def test_scan_zero_and_change_id(screen):
     wait(0.3)
     s.scan_btn.click()
     assert wait(2, lambda: "ID: 1, 2" in s.message.text()), s.message.text()
+    asked = []                                                         # до зміни ID 2 → 7
+    s.confirm = lambda text: asked.append(text) or False
+    s._on_recenter()
+    assert asked and "горизонт" in asked[0]                             # відмова — нічого не змінено
+    s.confirm = lambda text: True
+    s._on_recenter()
+    assert wait(2, lambda: "середину ходу" in s.message.text()), s.message.text()
+    assert s.cols["tilt"].zero.value() == 180.0
     s.change_servo_id(2, 7)
     assert wait(2, lambda: "ID змінено" in s.message.text()), s.message.text()
     s._on_zero(("pan",))
@@ -113,3 +121,16 @@ def test_telemetry_shown(screen):
     backend.camera("Камера 1").bus.servos[2].online = False
     assert wait(2, lambda: s.cols["tilt"].tel_pos.text() == "немає відповіді")
     assert "сервопривід не відповідає" in s.error_label.text()
+
+
+def test_zero_offset_kept_exact_and_azimuth_never_shows_360(app):
+    """«Встановити нуль» дає нуль із кроком вала (0,088°); «Зберегти» не має заокруглювати його — інакше
+    азимут −0,004° показується як 360,0°."""
+    from polar_app.ui.control_screen import ServoColumn, _fmt_az
+    from polar_core.control import ServoSettings
+    col = ServoColumn("pan")
+    col.load(ServoSettings("pan", 1, zero_offset_deg=123.3984375))
+    assert col.read().zero_offset_deg == 123.3984375
+    col.zero.setValue(10.5)                                         # змінено вручну — береться з поля
+    assert col.read().zero_offset_deg == 10.5
+    assert _fmt_az(359.996) == "0.0°" and _fmt_az(-0.004) == "0.0°" and _fmt_az(90.04) == "90.0°"

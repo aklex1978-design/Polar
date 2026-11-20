@@ -1,12 +1,15 @@
-"""«Обʼєкти управління / Калібрування»: перегляд камери з центром, колами поля зору і віссю нахилу; панорама з фігурою
-поля зору; перевірка похибки розміщення за орієнтиром."""
+"""Калібрування камери — вкладки «Калібрування» і «Панорама і маска» екрана «Обʼєкти управління / Управління».
+
+Живий кадр (CameraView) спільний з екраном «Управління»: на нього накладаються центр, кола поля зору, вісь
+нахилу і орієнтири. Тут — центр, нахил γ, перевірка похибки за орієнтиром; панорама з фігурою поля зору,
+маска зони виявлення і ручне введення кутів. Поворот камери — кнопками «Управління» (▲ ▼ ◀ ▶)."""
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
-from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGroupBox, QHBoxLayout, QLabel, QPushButton,
                              QSizePolicy, QVBoxLayout, QWidget)
@@ -14,7 +17,6 @@ from PyQt6.QtWidgets import (QCheckBox, QDoubleSpinBox, QGroupBox, QHBoxLayout, 
 from polar_core import calibration as cal
 from polar_core import cameras as cm
 from polar_core.angles import wrap360
-from polar_core.control import ManualControlLocked
 from polar_core.mask import LOWER, UPPER, DetectionMask, MaskItem, load_mask, save_mask
 from polar_core.projection import CameraModel, split_wrapped
 
@@ -26,6 +28,19 @@ CIRCLE_COLOR = QColor("#ffd60a")
 AXIS_COLOR = QColor("#30d158")
 LANDMARK_COLOR = QColor("#64d2ff")
 MASK_COLOR = QColor("#ff3b30")
+LIMIT_COLOR = QColor("#ff9f0a")
+CARDINAL_COLOR = QColor("#ffffff")
+# сторони світу: на панорамі азимут — від півночі (0° = північ, за годинниковою стрілкою)
+CARDINALS = ((0, "Пн"), (90, "Сх"), (180, "Пд"), (270, "Зх"), (360, "Пн"))
+
+
+def az_limits_north(pan, north_offset_deg: float) -> Optional[Tuple[float, float]]:
+    """Межі азимуту камери (налаштування сервопривода, кут камери) → від півночі (від, до за
+    годинниковою стрілкою). None — без меж (ковзний контакт) або межі на повне коло."""
+    lo, hi = getattr(pan, "min_deg", None), getattr(pan, "max_deg", None)
+    if lo is None or hi is None or hi - lo >= 360.0:
+        return None
+    return wrap360(lo + north_offset_deg), wrap360(hi + north_offset_deg)
 
 
 class CameraView(QWidget):
@@ -46,6 +61,8 @@ class CameraView(QWidget):
         self.landmarks: List[Tuple[float, float]] = []
         self.text_lines: List[str] = []
         self.boxes: List[Tuple[float, float, float, float]] = []     # знайдені обʼєкти (u, v, w, h)
+        # ймовірні цілі — пунктирні квадрати (u, v, w, h, колір, підпис) у пікселях кадру
+        self.marks: List[Tuple[float, float, float, float, QColor, str]] = []
         self.interactive = True
         self._drag = False
 
@@ -99,6 +116,28 @@ class CameraView(QWidget):
         self.center_moved.emit(u, v)
 
     # --- малювання ------------------------------------------------------------------------
+    def _paint_marks(self, p: QPainter, r: QRectF) -> None:
+        """Ймовірні цілі: пунктирний квадрат навколо плями (не менше 18 px на екрані) і підпис над ним."""
+        if not self.marks:
+            return
+        p.save()
+        p.setClipRect(r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        scale = r.width() / self.frame_size[0]
+        for u, v, w, h, color, label in self.marks:
+            c = self.to_widget(u, v)
+            side = max(18.0, max(w, h) * scale + 12.0)
+            box = QRectF(c.x() - side / 2, c.y() - side / 2, side, side)
+            p.setPen(QPen(QColor(0, 0, 0, 160), 4))               # тінь — видно і на світлому фоні
+            p.drawRect(box)
+            pen = QPen(color, 2, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawRect(box)
+            if label:
+                p.setPen(color)
+                p.drawText(QPointF(box.left(), box.top() - 4), label)
+        p.restore()
+
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -110,6 +149,7 @@ class CameraView(QWidget):
             p.setPen(QColor("#bbbbbb"))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Немає кадру")
         if self.model is None:
+            self._paint_marks(p, r)
             if self.text_lines:                      # напр. «Немає звʼязку · останній кадр …»
                 p.setPen(QColor("#ff9f0a"))
                 for i, line in enumerate(self.text_lines):
@@ -160,6 +200,7 @@ class CameraView(QWidget):
         for u, v, w, h in self.boxes:
             a, b = self.to_widget(u - w / 2 - 3, v - h / 2 - 3), self.to_widget(u + w / 2 + 3, v + h / 2 + 3)
             p.drawRect(QRectF(a, b))
+        self._paint_marks(p, r)
         # центр камери — перехрестя
         p.setPen(QPen(CENTER_COLOR, 2))
         p.drawLine(QPointF(c.x() - 16, c.y()), QPointF(c.x() + 16, c.y()))
@@ -198,6 +239,7 @@ class PanoramaView(QWidget):
         self.center: Optional[Tuple[float, float]] = None
         self.azimuth: Optional[float] = None
         self.label = ""
+        self.az_limits: Optional[Tuple[float, float]] = None    # дозволений азимут від півночі: від → до
 
     def heightForWidth(self, w: int) -> int:  # noqa: N802
         return int(w / 4) + 24
@@ -283,6 +325,47 @@ class PanoramaView(QWidget):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRect(QRectF(self._pt(*self._drag_start), self._pt(*self._drag_now)))
 
+    def _paint_az_limits(self, p: QPainter) -> None:
+        """Межі азимуту камери: недоступна частина затінена, межі — помаранчеві лінії з підписом."""
+        if self.az_limits is None:
+            return
+        a = self._area()
+        lo, hi = self.az_limits
+        # недоступно: від hi до lo за годинниковою стрілкою
+        spans = [(hi, lo)] if hi <= lo else [(hi, 360.0), (0.0, lo)]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 120))
+        for s0, s1 in spans:
+            x0, x1 = self._pt(s0, 0).x(), self._pt(s1, 0).x()
+            p.drawRect(QRectF(x0, a.top(), x1 - x0, a.height()))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for az, text in ((lo, "межа"), (hi, "межа")):
+            x = self._pt(az, 0).x()
+            p.setPen(QPen(LIMIT_COLOR, 2))
+            p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
+            p.drawText(QPointF(min(x + 4, a.right() - 70), a.bottom() - 6), f"{text} {az:.0f}°")
+
+    def _paint_cardinals(self, p: QPainter, font: QFont) -> None:
+        """Сторони світу вгорі панорами: білі жирні літери на темній плашці — видно на будь-якому фоні."""
+        a = self._area()
+        bold = QFont(font)
+        bold.setBold(True)
+        bold.setPointSizeF(font.pointSizeF() + 1)
+        p.setFont(bold)
+        fm = p.fontMetrics()
+        for az, text in CARDINALS:
+            w, h = fm.horizontalAdvance(text) + 8, fm.height() + 2
+            x = self._pt(az, 0).x() - w / 2
+            x = min(max(x, a.left() + 1), a.right() - w - 1)     # Пн на краях — всередині панорами
+            box = QRectF(x, a.top() + 2, w, h)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(0, 0, 0, 170))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(CARDINAL_COLOR)
+            p.drawText(QPointF(x + 4, a.top() + 3 + fm.ascent()), text)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setFont(font)
+
     def paintEvent(self, _e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -294,9 +377,11 @@ class PanoramaView(QWidget):
         font = QFont(self.font())
         font.setPointSizeF(max(7.0, font.pointSizeF() - 1.5))
         p.setFont(font)
+        cardinal = dict(CARDINALS)
         for az in range(0, 361, 30):
             x = self._pt(az, 0).x()
-            p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+            # сторона світу — яскравіша лінія; підпис (Пн, Сх …) — всередині панорами, див. _paint_cardinals
+            p.setPen(QPen(QColor(255, 255, 255, 90 if az in cardinal else 40), 1))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
             p.setPen(QColor(QUIET))
             p.drawText(QPointF(x - 8, a.bottom() + 14), f"{az}°")
@@ -308,6 +393,8 @@ class PanoramaView(QWidget):
             p.drawText(QPointF(2, y + 4), f"{el}°")
         p.setClipRect(a)
         self._paint_mask(p)
+        self._paint_az_limits(p)
+        self._paint_cardinals(p, font)
         if self.outline is not None and len(self.outline):
             pts = self.outline.copy()
             pts[:, 1] = np.minimum(pts[:, 1], 90.0)         # вище 90° — обрізається
@@ -319,7 +406,7 @@ class PanoramaView(QWidget):
             x = self._pt(self.azimuth, 0).x()
             p.setPen(QPen(QColor("#64d2ff"), 1, Qt.PenStyle.DashLine))
             p.drawLine(QPointF(x, a.top()), QPointF(x, a.bottom()))
-            p.drawText(QPointF(min(x + 4, a.right() - 48), a.top() + 12), f"{self.azimuth:.1f}°")
+            p.drawText(QPointF(min(x + 4, a.right() - 48), a.top() + 30), f"{self.azimuth:.1f}°")
         if self.center is not None:
             c = self._pt(*self.center)
             p.setPen(QPen(CENTER_COLOR, 2))
@@ -331,49 +418,45 @@ class PanoramaView(QWidget):
         p.end()
 
 
-class CalibrationScreen(QWidget):
-    closed = pyqtSignal()
+class CalibrationPanel:
+    """Логіка і віджети калібрування для однієї вибраної камери; вкладки — calib_tab і pano_tab."""
 
-    def __init__(self, ctx, parent=None) -> None:
-        super().__init__(parent)
+    def __init__(self, ctx, view: CameraView, say: Callable[[str, str], None]) -> None:
         self.ctx = ctx
+        self.view = view
+        self._say_cb = say
         self.rec = None
         self.calib: Optional[cal.Calibration] = None
-        self._streaming: Optional[str] = None
+        self.criterion = 0.5
         self._center_img: Optional[Tuple[float, float]] = None     # центр у пікселях кадру потоку
         self._img_size: Optional[Tuple[int, int]] = None
+        self._pano_version = None
+        self.mask: Optional[DetectionMask] = None
+        self._mask_dirty = False
         self.check = cal.LandmarkCheck()
+        view.center_moved.connect(self._on_center_moved)
+        view.clicked.connect(self._on_landmark)
+        self.calib_tab = self._build_calib_tab()
+        self.pano_tab = self._build_pano_tab()
 
-        v = QVBoxLayout(self)
-        self.title = QLabel("Обʼєкти управління / Калібрування")
-        self.title.setStyleSheet("font-size: 15px; font-weight: 600")
-        v.addWidget(self.title)
-        self.view = CameraView()
-        self.view.center_moved.connect(self._on_center_moved)
-        self.view.clicked.connect(self._on_landmark)
-        v.addWidget(self.view, 1)
-
+    # --- вкладка «Калібрування» ------------------------------------------------------------------
+    def _build_calib_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        hint = QLabel("Увімкніть «Накладки калібрування» над відео: червоне перехрестя — центр камери, його можна "
+                      "перетягнути мишею; жовті кола — частки поля зору; зелена лінія — вісь нахилу γ. "
+                      "Камеру повертайте кнопками ▲ ▼ ◀ ▶ вище.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {QUIET}")
+        v.addWidget(hint)
         row = QHBoxLayout()
         self.save_center_btn = QPushButton("Зберегти центр")
         self.save_center_btn.clicked.connect(self.save_center)
         self.reset_center_btn = QPushButton("Скинути центр")
         self.reset_center_btn.clicked.connect(self.reset_center)
-        self.close_btn = QPushButton("Закрити")
-        self.close_btn.clicked.connect(self.closed.emit)
-        self.jog_btns = []
-        row.addWidget(QLabel("Поворот:"))
-        for text, da, de in (("◀", -1, 0), ("▶", 1, 0), ("▲", 0, 1), ("▼", 0, -1)):
-            b = QPushButton(text)
-            b.setFixedWidth(34)
-            b.clicked.connect(lambda _=False, a=da, e=de: self._jog(a, e))
-            row.addWidget(b)
-            self.jog_btns.append(b)
-        self.step = QDoubleSpinBox()
-        self.step.setRange(0.1, 90)
-        self.step.setValue(10.0)
-        self.step.setSuffix("°")
-        row.addWidget(self.step)
-        row.addStretch(1)
+        row.addWidget(self.save_center_btn)
+        row.addWidget(self.reset_center_btn)
+        row.addSpacing(24)
         row.addWidget(QLabel("Нахил γ:"))
         self.tilt = QDoubleSpinBox()
         self.tilt.setRange(-180.0, 180.0)
@@ -387,10 +470,7 @@ class CalibrationScreen(QWidget):
         self.save_tilt_btn = QPushButton("Зберегти нахил")
         self.save_tilt_btn.clicked.connect(self.save_tilt)
         row.addWidget(self.save_tilt_btn)
-        row.addSpacing(12)
-        row.addWidget(self.save_center_btn)
-        row.addWidget(self.reset_center_btn)
-        row.addWidget(self.close_btn)
+        row.addStretch(1)
         v.addLayout(row)
 
         acc = QGroupBox("Перевірка похибки розміщення")
@@ -411,7 +491,13 @@ class CalibrationScreen(QWidget):
         ah.addWidget(self.error_label, 1)
         ah.addWidget(self.save_error_btn)
         v.addWidget(acc)
+        v.addStretch(1)
+        return w
 
+    # --- вкладка «Панорама і маска» ------------------------------------------------------------
+    def _build_pano_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
         self.panorama = PanoramaView()
         self.panorama.mask_changed.connect(self._on_mask_changed)
         ph = QHBoxLayout()
@@ -465,51 +551,40 @@ class CalibrationScreen(QWidget):
         mh.addStretch(1)
         mh.addWidget(self.manual_save)
         v.addWidget(manual)
-        self.message = QLabel("")
-        self.message.setWordWrap(True)
-        v.addWidget(self.message)
+        v.addStretch(1)
+        return w
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(100)
-
-    # --- відкриття / вихід ------------------------------------------------------------
-    def open_camera(self, camera_id: int) -> None:
-        self.leave()
+    # --- вибір камери ------------------------------------------------------------------------------
+    def open_camera(self, camera_id: Optional[int]) -> None:
+        enabled = camera_id is not None
+        self.calib_tab.setEnabled(enabled)
+        self.pano_tab.setEnabled(enabled)
+        if not enabled:
+            self.rec = None
+            return
         self.rec = self.ctx.camera(camera_id)
         with self.ctx.control._db_lock:
             self.calib = cal.load(self.ctx.conn, camera_id)
             self.criterion = cal.accuracy_criterion(self.ctx.conn)
-        self.title.setText(f"Обʼєкти управління / Калібрування · {self.rec.name}")
+            self.mask = load_mask(self.ctx.conn, camera_id)
         self._loading_tilt = True
         self.tilt.setValue(self.rec.tilt_deg)
         self._loading_tilt = False
         self._tilt_value = self.rec.tilt_deg
         self._img_size = None
         self._center_img = None
-        self.view.pixmap = None
         self.check.clear()
         self.view.landmarks = []
         self.landmark_btn.setChecked(False)
-        self._say("Перетягніть червоне перехрестя в точку зображення, що відповідає кутам датчика.")
         self._show_error()
         self.save_tilt_btn.setEnabled(False)
-        with self.ctx.control._db_lock:
-            self.mask = load_mask(self.ctx.conn, camera_id)
         self.panorama.mask = self.mask
         self._mask_dirty = False
+        self.save_mask_btn.setText("Зберегти маску")
         self.zone_btn.setChecked(False)
         self._pano_version = None
         self.panorama.pixmap = None
         self.manual_on.setChecked(False)
-        if self.ctx.video.acquire(self.rec.name):
-            self._streaming = self.rec.name
-        self.refresh()
-
-    def leave(self) -> None:
-        if self._streaming:
-            self.ctx.video.release(self._streaming)
-            self._streaming = None
 
     # --- модель і стан ---------------------------------------------------------------------
     def _size(self) -> Tuple[int, int]:
@@ -525,8 +600,9 @@ class CalibrationScreen(QWidget):
         m.cx, m.cy = self._center_img
         return m
 
-    def refresh(self) -> None:
-        if self.rec is None or not self.isVisible():
+    def refresh(self, overlays: bool = True) -> None:
+        """Накладки на спільному кадрі (якщо увімкнено) і фігура поля зору на панорамі."""
+        if self.rec is None:
             return
         sf = self.ctx.video.latest(self.rec.name)
         if sf is not None:
@@ -537,10 +613,8 @@ class CalibrationScreen(QWidget):
                     self._center_img = (self._center_img[0] * size[0] / old[0],
                                         self._center_img[1] * size[1] / old[1])
                 self._img_size = size
-            self.view.pixmap = frame_pixmap(sf.image)
         m = self.model()
         self.view.frame_size = self._size()
-        self.view.model = m
         st = self.ctx.control.status(self.rec.name)
         lines = [f"Центр камери: X {m.cx:.0f}, Y {m.cy:.0f} px",
                  f"Нахил γ: {m.tilt_deg:+.2f}°" + ("" if m.tilt_deg == self.rec.tilt_deg else " (не збережено)")]
@@ -554,6 +628,11 @@ class CalibrationScreen(QWidget):
         if self.manual_on.isChecked():
             sensor, el = self.m_sensor.value(), self.m_el.value()   # фігура — за введеними кутами
         self._refresh_panorama_image()
+        try:
+            pan = self.ctx.control.config(self.rec.name).pan
+        except KeyError:
+            pan = None
+        self.panorama.az_limits = az_limits_north(pan, self.rec.north_offset_deg)
         if sensor is not None:
             self.panorama.outline = m.frame_outline(sensor, el)
             self.panorama.center = m.center_angles(sensor, el)
@@ -567,14 +646,15 @@ class CalibrationScreen(QWidget):
             self.panorama.outline = None
             self.panorama.center = None
             self.panorama.azimuth = None
-        self.view.text_lines = lines
-        for b in self.jog_btns:
-            b.setEnabled(st.link_ok)
+        self.view.model = m if overlays else None
+        self.view.text_lines = lines if overlays else []
         self.view.update()
         self.panorama.update()
 
     # --- центр -------------------------------------------------------------------------------
     def _on_center_moved(self, u: float, v: float) -> None:
+        if self.rec is None:
+            return
         self._center_img = (u, v)
         self.view.landmarks = []
         if self.check.observations:
@@ -602,7 +682,7 @@ class CalibrationScreen(QWidget):
             return
         ver = learning.version.get(self.rec.name, 0)
         pano = learning.panorama(self.rec.name)
-        key = (id(pano), ver)
+        key = (self.rec.name, id(pano), ver)
         if key == self._pano_version:
             return
         self._pano_version = key
@@ -697,6 +777,8 @@ class CalibrationScreen(QWidget):
             self._say("Клацніть по орієнтиру; потім поверніть камеру (◀ ▶ ▲ ▼) і клацніть по ньому знову.")
 
     def _on_landmark(self, u: float, v: float) -> None:
+        if self.rec is None:
+            return
         sf = self.ctx.video.latest(self.rec.name)
         if sf is None or not sf.has_angles:
             self._say("Немає кутів кадру — позначка не врахована (немає звʼязку з сервоприводами).", BAD)
@@ -744,13 +826,5 @@ class CalibrationScreen(QWidget):
         self._show_error()
         self._say(f"Похибку розміщення {err:.2f}° записано в калібрування камери.", GOOD)
 
-    # --- поворот камери ------------------------------------------------------------------------
-    def _jog(self, d_az: int, d_el: int) -> None:
-        try:
-            self.ctx.control.jog(self.rec.name, d_az * self.step.value(), d_el * self.step.value(), 0.0)
-        except (ManualControlLocked, RuntimeError) as e:
-            self._say(str(e), BAD)
-
     def _say(self, text: str, color: str = "") -> None:
-        self.message.setText(text)
-        self.message.setStyleSheet(f"color: {color}" if color else "")
+        self._say_cb(text, color)

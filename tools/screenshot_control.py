@@ -80,7 +80,7 @@ while not ctx.detection.active and time.monotonic() < end:
 ctx.control.go_to(rec0.name, 75.0, 25.0, source="learning")
 pump(2.5)
 from polar_core.sim import SimTarget  # noqa: E402
-opts["open_factory"].cams[rec0.name].targets.append(SimTarget(83.0, 30.0, size_deg=1.5, brightness=0))
+opts["open_factory"].cams[rec0.name].targets.append(SimTarget(83.0, 30.0, size_deg=1.5, brightness=255))
 pump(2.5)
 win.stack.setCurrentWidget(win.grid)
 pump(2.0)
@@ -93,9 +93,17 @@ ctx.detection.stop()
 pump(0.5)
 win.calibrate_camera(rec0.id)
 pump(2.0)
-win.calibration.zone_btn.setChecked(True)
-pump(0.3)
 win.grab().save(os.path.join(out_dir, "calibration.png"))
+import copy  # noqa: E402
+from polar_core.control import ServoSettings  # noqa: E402
+_cfg = copy.deepcopy(ctx.control.config(rec0.name))
+_cfg.pan = ServoSettings("pan", _cfg.pan.servo_id, min_deg=20.0, max_deg=250.0)   # межі азимуту — на панорамі
+ctx.control.save_config(_cfg)
+pump(0.5)
+win.control.tabs.setCurrentIndex(win.control.pano_index)
+win.control.calib.zone_btn.setChecked(True)
+pump(0.3)
+win.grab().save(os.path.join(out_dir, "panorama_mask.png"))
 
 win.edit_camera(None)
 f = win.form
