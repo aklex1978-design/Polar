@@ -553,6 +553,8 @@ def test_work_screen_targets_table(win):
     svc.start(recs, DetectionSettings())
     svc._stop.set()
     svc._thread.join()
+    frozen = [time.monotonic()]                                  # свій годинник: повільний CI не «старить» обʼєкти
+    real_clock, svc._clock = svc._clock, lambda: frozen[0]
     target = GeoPoint(50.4515, 30.5270, 450.0)
     frame = LocalFrame.around(GeoPoint(r.latitude, r.longitude, r.altitude_m) for r in recs)
     for _ in range(3):
@@ -562,6 +564,7 @@ def test_work_screen_targets_table(win):
             svc.offer(r, [(NS(id=1), NS(az=az, el=el))], t)
         svc.offer(recs[2], [], t)
         svc.step()
+        frozen[0] += 0.04
     win.ctx.detection.mode.start_tracking()                       # таблиця показує цілі в Слідкуванні
     w.refresh()
     assert w.targets.rowCount() == 3
@@ -598,6 +601,7 @@ def test_work_screen_targets_table(win):
     det.cams.clear()
     win.ctx.detection.mode.stop()
     svc.stop()
+    svc._clock = real_clock
 
 
 def _kyiv_maps(d):
