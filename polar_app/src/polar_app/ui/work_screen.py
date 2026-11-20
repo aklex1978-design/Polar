@@ -27,7 +27,7 @@ TARGET_COLUMNS = ["Камера", "Ціль", "Час", "Азимут, °", "К�
 PRED_COL = TARGET_COLUMNS.index("Прогноз: широта, °")
 SUSPECT_COLOR = QColor("#ffd60a")     # жовтий — підозра
 TARGET_COLOR = QColor("#ff8080")      # світло-червоний — підтверджена ціль
-MARK_FRESH_S = 1.0                    # обʼєкти старші за це — не показувати
+MARK_FRESH_S = 0.5                    # обʼєкти старші за це — не показувати (камера могла зрушити)
 
 
 class WorkScreen(QWidget):
@@ -165,14 +165,24 @@ class WorkScreen(QWidget):
                 view.frame_size = (sf.image.shape[1], sf.image.shape[0])
             dc = det.camera(name)
             marks = []
+            numbers = det.targets.target_numbers(name) if det.active else {}
+            lock, lockon = dc.lock, dc.lockon
+            locked_track = None
+            if det.active and lock is not None and lockon is not None and now - lock.t <= MARK_FRESH_S:
+                num = numbers.get(lockon.track)
+                locked_track = lockon.track
+                marks.append((lock.u, lock.v, lock.w, lock.h, TARGET_COLOR if num is not None else SUSPECT_COLOR,
+                              (f"ціль №{num}" if num is not None else "підозра") + " · стеження"))
             if det.active and dc.marks and now - dc.frame_t <= MARK_FRESH_S:
-                numbers = det.targets.target_numbers(name)
                 for track, o in dc.marks:
+                    if locked_track is not None and track == locked_track:
+                        continue                                  # ця — вже позначена як ціль стеження
                     num = numbers.get(track)
                     if num is not None:
                         marks.append((o.u, o.v, o.w, o.h, TARGET_COLOR, f"ціль №{num}"))
                     else:
                         marks.append((o.u, o.v, o.w, o.h, SUSPECT_COLOR, "підозра"))
+            marks = marks[:max(1, det.settings.max_objects)]
             view.marks = marks
             st = dc.patrol_text if det.active else ""
             view.text_lines = [name] + ([st] if st else [])

@@ -22,11 +22,17 @@ from polar_core.detection import (DETECTION, IDLE, MODE_TEXT, TRACKING, Detectio
 from polar_core.angles import wrap360
 from polar_core.mask import load_mask
 from polar_core.cueing import ray_search_nodes
+from polar_core.lockon import CenterControl, LockOn, LockResult
 from polar_core.geo import bearing_elevation
 from polar_core.patrol import ALERT, CUE, Cue, Patroller, patrol_plan
 from polar_core.sync import LatencyMonitor
 
 from .target_service import TargetService
+
+
+@dataclass
+class _Track:
+    id: object
 
 
 @dataclass
@@ -43,6 +49,10 @@ class CameraDetection:
     patrol: Optional[Patroller] = None     # огляд зони; None — камера стоїть (час огляду 0)
     patrol_text: str = ""
     fov: Tuple[float, float] = (60.0, 34.0)  # фактичні кути огляду кадру (для кроку наведення)
+    lockon: Optional[LockOn] = None        # стеження за найяскравішою ціллю по кадрах (і під час руху)
+    lock: Optional[LockResult] = None      # де ціль на останньому кадрі
+    lock_obj: object = None
+    aim: Optional[CenterControl] = None
 
     @property
     def suspect(self):
@@ -167,8 +177,12 @@ class DetectionService:
                 cam.patrol = self._make_patrol(rec, model)
                 cam.fov = (model.hfov_deg, model.vfov_deg)
             pose = (wrap360(sf.angles.azimuth_deg + rec.north_offset_deg), sf.angles.elevation_deg)
+            locked = self._lock_step(rec, cam, sf, model, pose)
             if sf.t - last_move < self.SETTLE_S:
-                self.targets.clear(name)
+                if locked and not sf.angles.moving:   # камера щойно зупинилась — промінь цілі вже точний
+                    self.targets.offer(rec, [(_Track(cam.lockon.track), cam.lock)], sf.t)
+                else:
+                    self.targets.clear(name)
                 with self._lock:
                     cam.state = "камера рухається"
                     cam.result = None
@@ -209,6 +223,37 @@ class DetectionService:
             self._patrol(rec, cam, sf, pose, True, res)
             self._update_mode()
 
+    # --- стеження за ціллю: найяскравіша — у центр камери, плавно ---------------------------------------------
+    def _lock_step(self, rec, cam: CameraDetection, sf, model, pose) -> bool:
+        p = cam.patrol
+        if p is None or p.state != ALERT:
+            cam.lockon = cam.lock = cam.lock_obj = None
+            return False
+        prim = p.primary
+        if prim is not None and prim is not cam.lock_obj:            # найяскравіший обʼєкт останнього порівняння
+            track = next((tid for tid, o in cam.marks if o is prim), None)
+            cam.lockon, cam.lock_obj = LockOn(prim.az, prim.el, max(prim.w, prim.h), track), prim
+        if cam.lockon is None:
+            return False
+        if cam.aim is None:
+            cam.aim = CenterControl(max(0.2, self.settings.follow_center_pct / 100.0 * cam.fov[0]))
+        sensor_az, el = sf.angles.azimuth_deg, sf.angles.elevation_deg
+        r = cam.lockon.update(sf.image, model, sensor_az, el, sf.t, float(self.settings.diff_threshold))
+        cam.lock = r
+        if r is None:
+            return False
+        p.seen_lock(sf.t, r.az, r.el)
+        m = p.suspect.motion if p.suspect is not None else None
+        rate = (m.az_rate, m.el_rate) if m is not None else (0.0, 0.0)
+        aim = cam.aim.update(sf.t, pose, model.center_angles(sensor_az, el), (r.az, r.el), rate)
+        if aim is not None:
+            try:
+                self.ctx.control.go_to(rec.name, aim.az, aim.el, aim.speed, source="patrol")
+                p.aimed()
+            except Exception:  # noqa: BLE001 — немає звʼязку: наступний кадр спробує знову
+                pass
+        return True
+
     # --- огляд зони ------------------------------------------------------------------------------
     def _make_patrol(self, rec, model) -> Optional[Patroller]:
         s = self.settings
@@ -222,8 +267,7 @@ class DetectionService:
                    and cfg.pan.max_deg - cfg.pan.min_deg < 360.0)
         plan = patrol_plan(model.hfov_deg, model.vfov_deg, el_lo, el_hi, s.patrol_step_pct / 100.0,
                            rec.north_offset_deg, (cfg.pan.min_deg, cfg.pan.max_deg) if limited else None)
-        return Patroller(plan, s.patrol_dwell_s, max(1.0, s.hold_s), s.follow_center_pct / 100.0,
-                         cyclic=not limited, window_s=s.motion_window_s, predict_s=s.predict_s)
+        return Patroller(plan, s.patrol_dwell_s, max(1.0, s.hold_s), cyclic=not limited, window_s=s.motion_window_s, predict_s=s.predict_s)
 
     def _patrol(self, rec, cam: CameraDetection, sf, pose, still: bool, res) -> None:
         p = cam.patrol
@@ -252,8 +296,8 @@ class DetectionService:
     def _update_mode(self) -> None:
         now = self._clock()
         with self._lock:
-            motion = any(c.result is not None and c.result.objects and now - c.frame_t < 1.0
-                         for c in self.cams.values())
+            motion = any((c.result is not None and c.result.objects and now - c.frame_t < 1.0)
+                         or (c.lock is not None and now - c.lock.t < 1.0) for c in self.cams.values())
             before = self.mode.mode
             after = self.mode.update(motion, now)
         if after != before:

@@ -167,3 +167,21 @@ def test_settings_roundtrip(tmp_path):
     s.diff_threshold = 300
     with pytest.raises(ValueError):
         save_settings(conn, s)
+
+
+def test_only_brightest_objects_at_most_five(world):
+    """Не більше 5 обʼєктів — найяскравіші, найяскравіший перший."""
+    _scene, model, pano = world
+    img = _blank(world).astype(np.int16)
+    levels = [60, 75, 90, 105, 120, 135, 150]                      # над небом ~180: 7 плям різної яскравості
+    for k, add in enumerate(levels):
+        y, x = 60, 60 + k * 70
+        img[y:y + 2, x:x + 2] += add
+    frame = np.clip(img, 0, 255).astype(np.uint8)
+    every = Detector(DetectionSettings(max_objects=100)).detect(frame, pano, model, 75.0, 28.0).objects
+    assert len(every) == 7
+    res = Detector(DetectionSettings()).detect(frame, pano, model, 75.0, 28.0)
+    assert len(res.objects) == 5
+    b = [o.brightness for o in res.objects]
+    assert b == sorted(b, reverse=True)
+    assert b == sorted((o.brightness for o in every), reverse=True)[:5]          # саме 5 найяскравіших

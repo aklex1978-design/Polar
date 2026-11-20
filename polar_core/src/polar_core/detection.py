@@ -32,6 +32,7 @@ class DetectionSettings:
     min_area_px: int = 2                 # мінімальний розмір обʼєкта — площа, пікселів кадру (> 1 пікселя)
     min_frames: int = 2                  # обʼєкт має бути щонайменше на стількох кадрах поспіль
     solidity_pct: float = 80.0           # суцільність: частка пікселів плями від її площі без дір, %
+    max_objects: int = 5                 # не більше стількох обʼєктів на кадрі — найяскравіші
     max_range_m: float = 3000.0          # максимальна дальність (етап 6)
     diff_threshold: int = 30             # поріг різниці, 0–255
     reference_update_min: float = 10.0   # частота оновлення еталона, хв; 0 — не оновлювати
@@ -46,7 +47,7 @@ class DetectionSettings:
     patrol_el_min_deg: float = 0.0       # смуга огляду за кутом місця (центр кадру), °
     patrol_el_max_deg: float = 30.0
     patrol_step_pct: float = 80.0        # крок між положеннями, % поля зору (100 — без перекриття)
-    follow_center_pct: float = 10.0      # стеження: ціль далі від середини кадру — камера наводиться на неї, %
+    follow_center_pct: float = 3.0       # стеження: допуск — ціль далі від центру камери, ніж стільки % HFOV, — наведення
     # рух цілі (polar_core.motion)
     motion_window_s: float = 3.0         # вікно оцінки напрямку і швидкості, с
     predict_s: float = 10.0              # прогноз положення цілі через, с
@@ -62,6 +63,8 @@ class DetectionSettings:
             e.append("мінімальна кількість кадрів — 1–100")
         if not 0 <= self.solidity_pct <= 100:
             e.append("суцільність — 0–100 %")
+        if not 1 <= self.max_objects <= 100:
+            e.append("найбільше обʼєктів на кадрі — 1–100")
         if not 0 <= self.diff_threshold <= 255:
             e.append("поріг різниці — 0–255")
         if self.reference_update_min < 0:
@@ -136,6 +139,7 @@ class DetectedObject:
     az: float                # азимут від півночі
     el: float
     size_deg: float
+    brightness: float = 0.0  # наскільки пляма яскравіша за еталон (середнє по плямі), 0–255
 
 
 @dataclass
@@ -269,9 +273,12 @@ class Detector:
             az, elv = model.pixel_to_angles(uf - shift[0], vf - shift[1], sensor_az, el)
             if mask is not None and mask.is_dead(az, elv):
                 continue
+            bright = float(diff[y:y + bh, x:x + bw][labels[y:y + bh, x:x + bw] == i].mean())
             objects.append(DetectedObject(uf / scale, vf / scale, bw / scale, bh / scale, float(area) / scale ** 2,
-                                          float(az), float(elv), float(max(bw, bh) / px_per_deg)))
-        return DetectionResult(objects, shift, True, "", int(motion.sum()))
+                                          float(az), float(elv), float(max(bw, bh) / px_per_deg), bright))
+        # лише найяскравіші: не більше max_objects, найяскравіша — перша
+        objects.sort(key=lambda o: -o.brightness)
+        return DetectionResult(objects[:max(1, self.settings.max_objects)], shift, True, "", int(motion.sum()))
 
 
 def _stands_out(img: np.ndarray, labels: np.ndarray, i: int, x: int, y: int, bw: int, bh: int,

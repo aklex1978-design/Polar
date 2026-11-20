@@ -1,9 +1,10 @@
 """Огляд зони в режимі Слідкування і стеження за підозрілою ціллю.
 
 Камера послідовно обходить положення в дозволених межах (азимут — межі сервопривода, кут місця — смуга огляду
-з налаштувань), на кожному стоїть «час огляду» і порівнює кадри з панорамою. Рух → камера зупиняється
-(підозра на ціль) і аналізує його; коли обʼєкт підходить до краю кадру — камера повертається на нього, щоб
-ціль лишалась у кадрі. Руху немає довше за час утримання — огляд продовжується з того самого положення.
+з налаштувань), на кожному стоїть «час огляду» і порівнює кадри з панорамою. Рух → огляд зупиняється
+(підозра на ціль); з обʼєктів обирається найяскравіший, і камера плавно тримає його в центрі
+(polar_core.lockon, у DetectionService). Руху немає довше за час утримання — огляд продовжується з того самого
+положення.
 
 Підозра (азимут і кут місця від півночі) — те, що надалі отримуватимуть інші камери, щоб навестись на ціль
 і визначити її координати.
@@ -25,7 +26,6 @@ CUE = "наведення"
 ARRIVE_TOL_DEG = 1.5        # камера дійшла до цілі
 STOPPED_AFTER_S = 1.5       # або вже стоїть (відійшла і зупинилась) — напр. сервопривід не добирає частку градуса
 MOVE_TIMEOUT_S = 20.0       # не дійшла (межа, заклинило) — далі однаково
-LEAD_S = 0.5                # стеження: ціль, що рухається, — навестись туди, де вона буде за стільки
 
 
 def patrol_plan(hfov_deg: float, vfov_deg: float, el_min: float, el_max: float, step_frac: float,
@@ -51,9 +51,9 @@ def patrol_plan(hfov_deg: float, vfov_deg: float, el_min: float, el_max: float, 
     return [(wrap360(az + north_offset_deg), el) for az, el in plan]
 
 
-def off_center(u: float, v: float, width: int, height: int, center_frac: float) -> bool:
-    """Центр обʼєкта далі від середини кадру, ніж center_frac його ширини (висоти)."""
-    return abs(u - width / 2.0) > width * center_frac or abs(v - height / 2.0) > height * center_frac
+def brightest(objects):
+    """Найяскравіший обʼєкт (за контрастом до еталона; без нього — найбільший)."""
+    return max(objects, key=lambda o: (getattr(o, "brightness", 0.0), o.area_px))
 
 
 @dataclass
@@ -90,14 +90,14 @@ class Patroller:
     """Стан огляду однієї камери. update() викликається на кожен кадр і повертає нову ціль камери
     (азимут від півночі, кут місця) або None; ціль після обмеження межами передається в commanded()."""
 
-    def __init__(self, plan: Sequence[Tuple[float, float]], dwell_s: float, hold_s: float, center_frac: float,
+    def __init__(self, plan: Sequence[Tuple[float, float]], dwell_s: float, hold_s: float,
                  cyclic: bool = True, window_s: float = 3.0, predict_s: float = 10.0) -> None:
         self.window_s = window_s        # вікно оцінки руху підозри
         self.predict_s = predict_s      # прогноз кутів через стільки секунд
         self.plan = list(plan)
         self.dwell_s = dwell_s
         self.hold_s = hold_s
-        self.center_frac = center_frac  # стеження: обʼєкт далі від середини кадру — камера наводиться на нього
+        self.primary = None             # ціль стеження: найяскравіший обʼєкт останнього порівняного кадру
         self.cyclic = cyclic            # повне коло — по колу; у межах азимуту — туди й назад
         self.state = PATROL
         self.index = 0
@@ -182,14 +182,24 @@ class Patroller:
         self.cue_index += self._cue_dir
 
     def _start_alert(self, o, t: float, frame_size) -> Optional[Tuple[float, float]]:
+        """Огляд зупиняється; камера стоїть, стеження (наведення в центр) веде DetectionService."""
         self.state = ALERT
+        self.primary = o
         self.suspect = Suspect(o.az, o.el, t, t, track=AngularTrack(self.window_s))
         self.suspect.seen(t, o.az, o.el)
-        return self._follow(o, t, frame_size)
+        return None
 
-    @staticmethod
-    def _primary(objects):
-        return max(objects, key=lambda o: o.area_px)
+    def seen_lock(self, t: float, az: float, el: float) -> None:
+        """Ціль знайдено на кадрі стеженням (і під час руху камери)."""
+        if self.state == ALERT and self.suspect is not None:
+            self.suspect.seen(t, az, el)
+
+    def aimed(self) -> None:
+        """Камера наводиться за ціллю (для напису)."""
+        if self.suspect is not None:
+            self.suspect.follows += 1
+
+    _primary = staticmethod(brightest)
 
     # --- крок ---------------------------------------------------------------------------
     def update(self, t: float, pose: Optional[Tuple[float, float]], still: bool, compared: bool,
@@ -231,27 +241,18 @@ class Patroller:
                 return self._issue(self.cue_target.nodes[self.cue_index], t)
             return None
 
-        # ALERT: камера стоїть на цілі; за краєм кадру — повертається за нею
-        if seen:
-            o = self._primary(seen)
+        # ALERT: стеження за найяскравішим обʼєктом (наведення — у DetectionService)
+        if compared and objects:
+            o = self._primary(list(objects))
+            self.primary = o
             self.suspect.seen(t, o.az, o.el)
-            return self._follow(o, t, frame_size)
+            return None
         last = self.suspect.last_seen if self.suspect else t
-        if arrived and t - max(last, self._arrived_t or t) >= self.hold_s:
+        if t - last >= self.hold_s:
             self.state = PATROL                                  # ціль зникла — огляд далі з того ж положення
-            self.suspect = None
+            self.suspect, self.primary = None, None
             return self._issue(self.plan[self.index], t)
         return None
-
-    def _follow(self, o, t: float, frame_size: Tuple[int, int]) -> Optional[Tuple[float, float]]:
-        """Тримати ціль у середині кадру: зійшла з середини — навестись на неї (з упередженням на рух)."""
-        w, h = frame_size
-        if not (w and h and off_center(o.u, o.v, w, h, self.center_frac)):
-            return None
-        self.suspect.follows += 1
-        m = self.suspect.motion
-        az, el = m.predict(LEAD_S) if m is not None else (o.az, o.el)
-        return self._issue((wrap360(az), el), t)
 
     # --- для екранів ------------------------------------------------------------------------
     def text(self) -> str:
